@@ -42,7 +42,7 @@ predict_for_relation(List *restrict_clauses, List *selectivities,
 
 	if (load_fss(query_context.fspace_hash, *fss_hash, nfeatures, matrix,
 				 targets, &rows))
-		result = OkNNr_predict(rows, nfeatures, matrix, targets, features);
+		result = OPRr_predict(rows, features);
 	else
 	{
 		/*

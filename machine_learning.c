@@ -20,11 +20,24 @@
  */
 
 #include "aqo.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
+#define MAX_LINE_LEN 100
+
+/*
+ *  Main idea: y_pred = b0 + b1 * x_1,0 + b2 * x_2,0 + b3 * x_1,1 + b4 * x_2,1 + .... 
+ *  Max equation rank: 3
+ */
+
+static void compute_X_B(double (*X)[3], double *B, double **matrix, double *targets, int nrows, int ncols);
+static double compute_det3x3(double **matrix);
+static void compute_inverse_matrix(double (*X)[3], double **matrix);
+static void multiply_matrix(double (*X)[3], double *BIAS, double *bias);
+static void get_bias(double *bias);
+static void save_bias(double *bias);
 static double fs_distance(double *a, double *b, int len);
-static double fs_similarity(double dist);
-static double compute_weights(double *distances, int nrows, double *w, int *idx);
-
 
 /*
  * Computes L2-distance between two given vectors.
@@ -42,111 +55,163 @@ fs_distance(double *a, double *b, int len)
 	return res;
 }
 
-/*
- * Returns similarity between objects based on distance between them.
- */
-double
-fs_similarity(double dist)
-{
-	return 1.0 / (0.001 + dist);
+void
+get_bias(double *bias) {
+    FILE *file;
+    char line[MAX_LINE_LEN];
+    double bias_0, bias_1, bias_2;
+
+    file = fopen("aqo.conf", "r");
+    if (file == NULL) {
+        elog(ERROR, "Can not read aqo.conf");
+    }
+    else {
+        while (fgets(line, sizeof(line), file)) {
+            if (line[0] == '#') {
+                continue;
+            }
+
+            if (strstr(line, "bias_0") != NULL) {
+                sscanf(line, "bias_0 = %lf", &bias_0);
+            } else if (strstr(line, "bias_1") != NULL) {
+                sscanf(line, "bias_1 = %lf", &bias_1);
+            } else if (strstr(line, "bias_2") != NULL) {
+                sscanf(line, "bias_2 = %lf", &bias_2);
+            }
+        }
+
+        fclose(file);
+
+        bias[0] = bias_0;
+        bias[1] = bias_1;
+        bias[2] = bias_2;
+    }
+}
+
+void
+save_bias(double *bias) {
+    FILE *file;
+
+    file = fopen("aqo.conf", "w");
+    if (file == NULL) {
+        elog(ERROR, "Can not read aqo.conf");
+    }
+    else {
+        fprintf(file, "# aqo.conf - AQO configuration file\n");
+        fprintf(file, "# Polynomial Regression model parameters\n");
+        fprintf(file, "bias_0 = %.3f\n", bias[0]);
+        fprintf(file, "bias_1 = %.3f\n", bias[1]);
+        fprintf(file, "bias_2 = %.3f\n", bias[2]);
+
+        fclose(file);
+    }
 }
 
 /*
- * Compute weights necessary for both prediction and learning.
- * Creates and returns w, w_sum and idx based on given distances ad matrix_rows.
- *
- * Appeared as a separate function because of "don't repeat your code"
- * principle.
- */
-double
-compute_weights(double *distances, int nrows, double *w, int *idx)
-{
-	int		i,
-			j;
-	int		to_insert,
-			tmp;
-	double	w_sum = 0;
+*   Compute X
+*/
+void
+compute_X_B(double (*X)[3], double *B, double **matrix, double *targets, int nrows, int ncols) {
 
-	for (i = 0; i < aqo_k; ++i)
-		idx[i] = -1;
+    double  sum_x = 0,
+            sum_y = 0,
+            sum_xy = 0,
+            sum_x2 = 0,
+            sum_x2y = 0,
+            sum_x3 = 0,
+            sum_x4 = 0;
 
-	/* Choose from all neighbors only several nearest objects */
-	for (i = 0; i < nrows; ++i)
-		for (j = 0; j < aqo_k; ++j)
-			if (idx[j] == -1 || distances[i] < distances[idx[j]])
-			{
-				to_insert = i;
-				for (; j < aqo_k; ++j)
-				{
-					tmp = idx[j];
-					idx[j] = to_insert;
-					to_insert = tmp;
-				}
-				break;
-			}
+    /* Calc element of X */
+    for (int i=0; i<nrows; ++i) {
+        double  temp_x = 0;
 
-	/* Compute weights by the nearest neighbors distances */
-	for (j = 0; j < aqo_k && idx[j] != -1; ++j)
-	{
-		w[j] = fs_similarity(distances[idx[j]]);
-		w_sum += w[j];
-	}
-	return w_sum;
+        sum_y += targets[i];
+
+        for (int j=0; j<ncols; ++j) {
+            sum_x += matrix[i][j];
+            temp_x += matrix[i][j];
+        }
+
+        sum_x2 += pow(temp_x, 2);
+        sum_x3 += pow(temp_x, 3);
+        sum_x4 += pow(temp_x, 4);
+
+        sum_xy += sum_x * sum_y;
+        sum_x2y += sum_x2 * sum_y;
+    }
+
+    X[0][0] = nrows;
+    X[0][1] = sum_x;
+    X[0][2] = sum_x2;
+    X[1][0] = X[0][1];
+    X[1][1] = X[0][2];
+    X[1][2] = sum_x3;
+    X[2][0] = X[1][1];
+    X[2][1] = X[1][2];
+    X[2][2] = sum_x4;
+
+    B[0] = sum_y;
+    B[1] = sum_xy;
+    B[2] = sum_x2y;
 }
 
-/*
- * With given matrix, targets and features makes prediction for current object.
- *
- * Returns negative value in the case of refusal to make a prediction, because
- * positive targets are assumed.
- */
+double 
+compute_det3x3(double **matrix) {
+    return    matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
+            - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[2][0] * matrix[1][2])
+            + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[2][0] * matrix[1][1]);
+}
+
+void 
+compute_inverse_matrix(double (*X)[3], double **matrix) {
+    double det = compute_det3x3(matrix);
+
+    if (det == 1e-10) {
+        elog(ERROR, "Determinant equal 0");
+    }
+    
+    for (int i=0; i<3; ++i) {
+        for (int j=0; j<3; ++j) {
+            X[i][j] *= 1 / det;
+        }
+    }
+}
+
+void 
+multiply_matrix(double (*X)[3], double *BIAS, double *bias) {
+    for (int i=0; i<3; ++i) {
+        for (int j=0; j<3; ++j) {
+            bias[i] += X[i][j]*BIAS[j];
+        }
+    }
+}
+
 double
-OkNNr_predict(int nrows, int ncols, double **matrix, const double *targets,
-			  double *features)
+OPRr_predict(int nrows, double *features)
 {
-	double	distances[aqo_K];
-	int		i;
-	int		idx[aqo_K]; /* indexes of nearest neighbors */
-	double	w[aqo_K];
-	double	w_sum;
-	double	result = 0;
+    double b[3];
+    double sum_x = 0;
+    double result = 0;
 
-	for (i = 0; i < nrows; ++i)
-		distances[i] = fs_distance(matrix[i], features, ncols);
+    get_bias(b);
 
-	w_sum = compute_weights(distances, nrows, w, idx);
+    for(int i=0; i<nrows; ++i)
+        sum_x += features[i];
 
-	for (i = 0; i < aqo_k; ++i)
-		if (idx[i] != -1)
-			result += targets[idx[i]] * w[i] / w_sum;
-
-	if (result < 0)
-		result = 0;
-
-	/* this should never happen */
-	if (idx[0] == -1)
-		result = -1;
+    result = b[0] + b[1] * sum_x + b[2] * sum_x*sum_x;
 
 	return result;
 }
 
-/*
- * Modifies given matrix and targets using features and target value of new
- * object.
- * Returns indexes of changed lines: if index of line is less than matrix_rows
- * updates this line in database, otherwise adds new line with given index.
- * It is supposed that indexes of new lines are consequent numbers
- * starting from matrix_rows.
- */
 int
-OkNNr_learn(int nrows, int nfeatures, double **matrix, double *targets,
+OPRr_learn(int nrows, int nfeatures, double **matrix, double *targets,
 			double *features, double target)
 {
 	double	   distances[aqo_K];
 	int			i,
 				j;
 	int			mid = 0; /* index of row with minimum distance value */
-	int		   idx[aqo_K];
+    double X[3][3], B[3], b[3];
 
 	/*
 	 * For each neighbor compute distance and search for nearest object.
@@ -172,68 +237,17 @@ OkNNr_learn(int nrows, int nfeatures, double **matrix, double *targets,
 		return nrows;
 	}
 
-	if (nrows < aqo_K)
-	{
-		/* We can't reached limit of stored neighbors */
+    /* Init X, B, b */
+    for (int i=0; i<3; ++i){
+        B[i]=0, b[i]=0;
+        for (int j=0; j<3; ++j)
+            X[i][j]=0;
+    }
 
-		/*
-		 * Add new line into the matrix. We can do this because matrix_rows
-		 * is not the boundary of matrix. Matrix has aqo_K free lines
-		 */
-		for (j = 0; j < nfeatures; ++j)
-			matrix[nrows][j] = features[j];
-		targets[nrows] = target;
-
-		return nrows+1;
-	}
-	else
-	{
-		double	*feature;
-		double	avg_target = 0;
-		double	tc_coef; /* Target correction coefficient */
-		double	fc_coef; /* Feature correction coefficient */
-		double	w[aqo_K];
-		double	w_sum;
-
-		/*
-		 * We reaches limit of stored neighbors and can't simply add new line
-		 * at the matrix. Also, we can't simply delete one of the stored
-		 * neighbors.
-		 */
-
-		/*
-		 * Select nearest neighbors for the new object. store its indexes in
-		 * idx array. Compute weight for each nearest neighbor and total weight
-		 * of all nearest neighbor.
-		 */
-		w_sum = compute_weights(distances, nrows, w, idx);
-
-		/*
-		 * Compute average value for target by nearest neighbors. We need to
-		 * check idx[i] != -1 because we may have smaller value of nearest
-		 * neighbors than aqo_k.
-		 * Semantics of coef1: it is defined distance between new object and
-		 * this superposition value (with linear smoothing).
-		 * */
-		for (i = 0; i < aqo_k && idx[i] != -1; ++i)
-			avg_target += targets[idx[i]] * w[i] / w_sum;
-		tc_coef = learning_rate * (avg_target - target);
-
-		/* Modify targets and features of each nearest neighbor row. */
-		for (i = 0; i < aqo_k && idx[i] != -1; ++i)
-		{
-			fc_coef = tc_coef * (targets[idx[i]] - avg_target) * w[i] * w[i] /
-				sqrt(nfeatures) / w_sum;
-
-			targets[idx[i]] -= tc_coef * w[i] / w_sum;
-			for (j = 0; j < nfeatures; ++j)
-			{
-				feature = matrix[idx[i]];
-				feature[j] -= fc_coef * (features[j] - feature[j]) /
-					distances[idx[i]];
-			}
-		}
-	}
-
-	return nrows;
+    compute_X_B(X, B, matrix, targets, nrows, nfeatures);
+    compute_inverse_matrix(X, matrix);
+    multiply_matrix(X, B, b);
+    save_bias(b);
+   
+    return nrows;
 }

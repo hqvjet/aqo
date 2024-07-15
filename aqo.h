@@ -355,10 +355,8 @@ void		aqo_copy_generic_path_info(PlannerInfo *root, Plan *dest, Path *src);
 void		aqo_ExecutorEnd(QueryDesc *queryDesc);
 
 /* Machine learning techniques */
-extern double OkNNr_predict(int nrows, int ncols,
-							double **matrix, const double *targets,
-							double *features);
-extern int OkNNr_learn(int matrix_rows, int matrix_cols,
+extern double OPRr_predict(int nrows, double *features);
+extern int OPRr_learn(int matrix_rows, int matrix_cols,
 			double **matrix, double *targets,
 			double *features, double target);
 

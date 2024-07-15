@@ -86,7 +86,7 @@ atomic_fss_learn_step(int fhash, int fss_hash, int ncols,
 	if (!load_fss(fhash, fss_hash, ncols, matrix, targets, &nrows))
 		nrows = 0;
 
-	nrows = OkNNr_learn(nrows, ncols, matrix, targets, features, target);
+	nrows = OPRr_learn(nrows, ncols, matrix, targets, features, target);
 	update_fss(fhash, fss_hash, nrows, ncols, matrix, targets);
 
 	LockRelease(&tag, ExclusiveLock, false);
