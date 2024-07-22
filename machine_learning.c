@@ -19,29 +19,38 @@
  *
  */
 
-#include "aqo.h"
+// #include "aqo.h"
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 #define MAX_LINE_LEN 100
+#define object_selection_threshold 0.01
+#define aqo_K 30
+#define learning_rate 1e-1
 
 /*
  *  Main idea: y_pred = b0 + b1 * x_1,0 + b2 * x_2,0 + b3 * x_1,1 + b4 * x_2,1 + .... 
  *  Max equation rank: 3
  */
 
-static void compute_X_B(double (*X)[3], double *B, double **matrix, double *targets, int nrows, int ncols);
-static double compute_det3x3(double **matrix);
-static void compute_inverse_matrix(double (*X)[3], double **matrix);
-static void multiply_matrix(double (*X)[3], double *BIAS, double *bias);
-static void get_bias(double *bias);
-static void save_bias(double *bias);
-static double fs_distance(double *a, double *b, int len);
+// static void compute_X_B(double (*X)[3], double *B, double **matrix, double *targets, int nrows, int ncols);
+// static double compute_det3x3(double **matrix);
+// static void compute_inverse_matrix(double (*X)[3], double **matrix);
+// static void multiply_matrix(double (*X)[3], double *BIAS, double *bias);
+// static void get_bias(double *bias);
+// static void save_bias(double *bias);
+// static double fs_distance(double *a, double *b, int len);
 
 /*
  * Computes L2-distance between two given vectors.
  */
+double OPRr_predict(int nrows, double *features);
+int OPRr_learn(int nrows, int nfeatures, double **matrix, double *targets,
+                double *features, double target); // Fix the declarations
+
 double
 fs_distance(double *a, double *b, int len)
 {
@@ -63,7 +72,8 @@ get_bias(double *bias) {
 
     file = fopen("aqo.conf", "r");
     if (file == NULL) {
-        elog(ERROR, "Can not read aqo.conf");
+        // elog(ERROR, "Can not read aqo.conf");
+        printf("Cant read aqo.conf");
     }
     else {
         while (fgets(line, sizeof(line), file)) {
@@ -94,7 +104,9 @@ save_bias(double *bias) {
 
     file = fopen("aqo.conf", "w");
     if (file == NULL) {
-        elog(ERROR, "Can not read aqo.conf");
+        // elog(ERROR, "Can not read aqo.conf");
+        printf("Error opening file: %s\n", strerror(errno));
+        perror("Cannot write to aqo.conf");
     }
     else {
         fprintf(file, "# aqo.conf - AQO configuration file\n");
@@ -165,9 +177,11 @@ compute_det3x3(double **matrix) {
 void 
 compute_inverse_matrix(double (*X)[3], double **matrix) {
     double det = compute_det3x3(matrix);
+    printf("determinant: %f\n", det);
 
     if (det == 1e-10) {
-        elog(ERROR, "Determinant equal 0");
+        // elog(ERROR, "Determinant equal 0");
+        printf("SOS det\n");
     }
     
     for (int i=0; i<3; ++i) {
@@ -187,7 +201,7 @@ multiply_matrix(double (*X)[3], double *BIAS, double *bias) {
 }
 
 double
-OPRr_predict(int nrows, double *features)
+OPRr_predict(int ncols, double *feature)
 {
     double b[3];
     double sum_x = 0;
@@ -195,8 +209,8 @@ OPRr_predict(int nrows, double *features)
 
     get_bias(b);
 
-    for(int i=0; i<nrows; ++i)
-        sum_x += features[i];
+    for(int i=0; i<ncols; ++i)
+        sum_x += feature[i];
 
     result = b[0] + b[1] * sum_x + b[2] * sum_x*sum_x;
 
@@ -248,6 +262,40 @@ OPRr_learn(int nrows, int nfeatures, double **matrix, double *targets,
     compute_inverse_matrix(X, matrix);
     multiply_matrix(X, B, b);
     save_bias(b);
+    printf("BIAS SAVED\n");
    
     return nrows;
+}
+
+int main() {
+    double feature_matrix[3][3] = {
+        {0.1, 0.2, 0.3},
+        {0.3, 0.4, 0.5},
+        {0.5, 0.6, 0.7}
+    };
+
+    // Khai báo double**
+    double **matrix;
+    int rows = 3, cols = 3;
+
+    // Cấp phát bộ nhớ cho mảng các con trỏ
+    matrix = (double**)malloc(rows * sizeof(double*));
+
+    // Cấp phát bộ nhớ cho mỗi hàng và sao chép dữ liệu
+    for (int i = 0; i < rows; i++) {
+        matrix[i] = (double*)malloc(cols * sizeof(double));
+        for (int j = 0; j < cols; j++) {
+            matrix[i][j] = feature_matrix[i][j];
+        }
+    }
+
+    double targets[3] = {10, 20, 30};
+    double feature[3] = {0.34, 0.45, 0.64};
+    double target = 12;
+
+    int temp = OPRr_learn(3, 3, matrix, targets, feature, target);
+
+    double res = OPRr_predict(3, feature);
+    printf("%f\n", res);
+
 }
