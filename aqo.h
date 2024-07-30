@@ -235,12 +235,11 @@ extern double auto_tuning_convergence_error;
 /* Machine learning parameters */
 
 /* Max number of matrix rows - max number of possible neighbors. */
-#define	aqo_K	(30)
+#define	aqo_RANK	(3)
 
 extern const double object_selection_prediction_threshold;
 extern const double object_selection_threshold;
 extern const double learning_rate;
-extern int	aqo_k;
 extern double log_selectivity_lower_bound;
 
 /* Parameters for current query */
