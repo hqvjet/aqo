@@ -278,16 +278,18 @@ add_query_text(int qhash)
  *
  * 'fss_hash' is the hash of feature subspace which is supposed to be loaded
  * 'ncols' is the number of clauses in the feature subspace
- * 'matrix' is an allocated memory for matrix with the size of aqo_K rows
+ * 'X_matrix' is an allocated memory for matrix with the size of aqo_K rows
  *			and nhashes columns
- * 'targets' is an allocated memory with size aqo_K for target values
- *			of the objects
+ * 'Y_matrix'
+ * 'B_matrix'
  * 'rows' is the pointer in which the function stores actual number of
  *			objects in the given feature space
+ * 'rank'
  */
 bool
 load_fss(int fhash, int fss_hash,
-		 int ncols, double **matrix, double *targets, int *rows)
+		 int ncols, double **X_matrix, double *Y_matrix, double *B_matrix, 
+         int *rows, int *rank)
 {
 	RangeVar	*rv;
 	Relation	hrel;
@@ -299,8 +301,8 @@ load_fss(int fhash, int fss_hash,
 	Oid			reloid;
 	IndexScanDesc scan;
 	ScanKeyData	key[2];
-	Datum		values[5];
-	bool		isnull[5];
+	Datum		values[7];
+	bool		isnull[7];
 	bool		success = true;
 
 	reloid = RelnameGetRelid("aqo_fss_access_idx");
@@ -339,9 +341,11 @@ load_fss(int fhash, int fss_hash,
 				/*
 				 * The case than an object has not any filters and selectivities
 				 */
-				deform_matrix(values[3], matrix);
+				deform_matrix(values[3], X_matrix);
 
-			deform_vector(values[4], targets, rows);
+			deform_vector(values[4], Y_matrix, rows);
+            deform_vector(values[5], B_matrix);
+            rank = DatumGetInt32(values[6]);
 		}
 		else
 			elog(ERROR, "unexpected number of features for hash (%d, %d):\
