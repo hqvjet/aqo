@@ -115,6 +115,7 @@
 #define __ML_CARD_H__
 
 #include <math.h>
+#include <stdlib.h>
 
 #include "postgres.h"
 
@@ -354,10 +355,9 @@ void		aqo_copy_generic_path_info(PlannerInfo *root, Plan *dest, Path *src);
 void		aqo_ExecutorEnd(QueryDesc *queryDesc);
 
 /* Machine learning techniques */
-extern double OPRr_predict(int nrows, double *features);
-extern int OPRr_learn(int matrix_rows, int matrix_cols,
-			double **matrix, double *targets,
-			double *features, double target);
+extern double OPRr_predict(int rank, int ncols, double *features, double *bias);
+extern int OPRr_learn(double **X_matrix, double *Y_matrix, double *B_matrix, int nfeatures,
+                        double *features, double target);
 
 /* Automatic query tuning */
 void		automatical_query_tuning(int query_hash, QueryStat * stat);

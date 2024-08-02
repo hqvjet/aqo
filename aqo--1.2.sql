@@ -31,22 +31,10 @@ CREATE TABLE public.aqo_data (
 	fsspace_hash	int NOT NULL,
 	nfeatures		int NOT NULL,
 	features		double precision[][],
-	targets			double precision[]
+	targets			double precision[],
+    bias            double precision[],
+    rank            int NOT NULL
 );
-
-CREATE TABLE public.aqo_weight (
-    bias_0          double precision NOT NULL,
-    bias_1          double precision NOT NULL,
-    bias_2          double precision NOT NULL,
-    bias_3          double precision,
-    bias_4          double precision,
-    sum_x           double precision NOT NULL,
-    sum_y           double precision NOT NULL,
-    sum_x2          double precision NOT NULL,
-    sum_x3          double precision NOT NULL,
-    sum_x4          double precision NOT NULL,
-    sum_y2          double precision NOT NULL,
-)
 
 CREATE UNIQUE INDEX aqo_fss_access_idx ON public.aqo_data (fspace_hash, fsspace_hash);
 
@@ -64,26 +52,6 @@ CREATE TRIGGER aqo_queries_invalidate AFTER UPDATE OR DELETE OR TRUNCATE
 --
 -- Service functions
 --
-
--- Show Polynomial Regression Weight
-CREATE OR REPLACE FUNCTION public.aqo_get_weights()
-RETURNS TABLE (
-    bias_0 DOUBLE PRECISION,
-    bias_1 DOUBLE PRECISION,
-    bias_2 DOUBLE PRECISION,
-    bias_3 DOUBLE PRECISION,
-    bias_4 DOUBLE PRECISION,
-    sum_x DOUBLE PRECISION,
-    sum_y DOUBLE PRECISION,
-    sum_x2 DOUBLE PRECISION,
-    sum_x3 DOUBLE PRECISION,
-    sum_x4 DOUBLE PRECISION,
-    sum_y2 DOUBLE PRECISION
-)
-AS $func$
-SELECT bias_0, bias_1, bias_2, bias_3, bias_4, sum_x, sum_y, sum_x2, sum_x3, sum_x4, sum_y2
-FROM public.aqo_weight;
-$func$ LANGUAGE SQL;
 
 -- Show query state at the AQO knowledge base
 CREATE FUNCTION public.aqo_status(hash int)

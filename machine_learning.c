@@ -15,10 +15,7 @@
  *
  */
 
-// #include "aqo.h"
-#include <math.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include "aqo.h"
 #define aqo_RANK (3)
 #define EPSILON 1e-15
 
@@ -45,20 +42,18 @@ update_X_matrix(int nfeatures, double **matrix, double *features) {
                 matrix[i][j] += pow(features[index_i], pow_i) * pow(features[index_j], pow_j);
             }
 
-            else {
-                printf("yo: %f\n", matrix[i][j]);
+            else 
                 matrix[i][j] += 1.0;
-            }
         }
     }
 
     // printf
-    printf("X matrix:\n");
-    for (int i = 0; i < limit; ++i) {
-        for (int j = 0; j < limit; ++j)
-            printf("%f ", matrix[i][j]);
-        printf("\n");
-    }
+//     printf("X matrix:\n");
+//     for (int i = 0; i < limit; ++i) {
+//         for (int j = 0; j < limit; ++j)
+//             printf("%f ", matrix[i][j]);
+//         printf("\n");
+//     }
 }
 
 /*
@@ -98,28 +93,28 @@ void swapRows(double **A, int row1, int row2, int limit) {
 
 /*
  * Computes inverse bias weight of model
- * We focus on using modified Cholesky Decomposition for solving inverse matrix
+ * We focus on using Gauss Jordan Elimination for solving inverse matrix
  */
 int calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_inverse) {
     int limit = nfeatures * aqo_RANK + 1;
 
     /*
-     * Let X = L.L^(-1), we calculate L matrix by below code
-     * For avoid non-positive definition matrix, we replace B[i][j] = 0 by epsilon
+     * Init inverse matrix
      */
-
     for (int i = 0; i < limit; ++i) {
         for (int j = 0; j < limit; ++j) {
             X_inverse[i][j] = (i == j) ? 1.0 : 0.0;
         }
     }
 
+    /*
+     * Copy data from X matrix
+     */
     double **temp_matrix = (double **)malloc(limit * sizeof(double *));
     for (int i = 0; i < limit; i++) {
         temp_matrix[i] = (double *)malloc(limit * sizeof(double));
     }
 
-    // Sao chép dữ liệu từ matrix sang temp_matrix
     for (int i = 0; i < limit; i++) {
         for (int j = 0; j < limit; j++) {
             temp_matrix[i][j] = X_matrix[i][j];
@@ -136,7 +131,6 @@ int calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_invers
                 pivot = j;
             }
         }
-        printf("%f ", temp_matrix[pivot][i]);
 
         /*
          * Check for if matrix is invertible
@@ -167,12 +161,40 @@ int calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_invers
         }
     }
 
-    printf("X inverse:\n");
-    for (int i = 0; i < limit; ++i) {
-        for (int j = 0; j < limit; ++j)
-            printf("%f ", X_inverse[i][j]);
-        printf("\n");
-    }
+    // printf("X inverse:\n");
+    // for (int i = 0; i < limit; ++i) {
+    //     for (int j = 0; j < limit; ++j)
+    //         printf("%f ", X_inverse[i][j]);
+    //     printf("\n");
+    // }
+    //
+    // double I[limit][limit];
+    //
+    // for (int i = 0; i < limit; ++i) {
+    //     for (int j = 0; j <limit; ++j) {
+    //         I[i][j] = 0;
+    //     }
+    // }
+    //
+    // for (int i = 0; i < limit; ++i) {
+    //     for (int j = 0; j <limit; ++j) {
+    //         for (int k = 0; k < limit; ++k)
+    //             I[i][j] += X_matrix[i][k] * X_inverse[k][j];
+    //     }
+    // }
+    //
+    // printf("I matrix:\n");
+    // for (int i = 0; i < limit; ++i) {
+    //     for (int j = 0; j < limit; ++j)
+    //         printf("%f ", I[i][j]);
+    //     printf("\n");
+    // }
+    // printf("Temp matrix:\n");
+    // for (int i = 0; i < limit; ++i) {
+    //     for (int j = 0; j < limit; ++j)
+    //         printf("%f ", temp_matrix[i][j]);
+    //     printf("\n");
+    // }
 
     return 1;
 }
@@ -217,35 +239,33 @@ OPRr_learn(double **X_matrix, double *Y_matrix, double *B_matrix, int nfeatures,
     update_X_matrix(nfeatures, X_matrix, features);
     update_Y_matrix(nfeatures, Y_matrix, features, target);
 
-    for (int rank = 1; rank <= aqo_RANK; ++rank) {
+    /*
+     * We find the inverse matrix and then, we will get new bias weights using B = X^(-1).Y
+     * Finally, We will calculate evaluation of model with equation <rank>
+     * If the matrix is not inversible, then we will skip bias updating and use old bias
+     * Later, we will use pseudo inverse for non-inversible matrix
+     */
+    if (calculate_inverse_matrix(nfeatures, X_matrix, X_inverse)) {
+        update_B_matrix(nfeatures, X_matrix, Y_matrix, B_matrix);
+
+        for (int rank = 1; rank <= aqo_RANK; ++rank) 
+            eval_scores[rank-1] = evaluate(rank, nfeatures, B_matrix, features, target);
 
         /*
-         * We find the inverse matrix and then, we will get new bias weights using B = X^(-1).Y
-         * Finally, We will calculate evaluation of model with equation <rank>
-         * If the matrix is not inversible, then we will skip bias updating and use old bias
-         * Later, we will use pseudo inverse for non-inversible matrix
+         * We search for the lowest loss model based on new features, target
+         * Our weekness is the loss model is only based on one new features. target. That may lead to
+         * a bit partial to new features
          */
-        if (calculate_inverse_matrix(nfeatures, X_matrix, X_inverse)) {
-            update_B_matrix(nfeatures, X_matrix, Y_matrix, B_matrix);
-            eval_scores[rank-1] = evaluate(rank, nfeatures, B_matrix, features, target);
-            printf("eval: %f\n", eval_scores[rank - 1]);
-        }
-        else
-            printf("Matrix is not invertible\n");
+        int best_rank = 1;
+
+        for (int i=2; i <= aqo_RANK; ++i)
+            if (eval_scores[best_rank] < eval_scores[i])
+                best_rank = i;
+
+        return best_rank;
     }
-
-    /*
-     * We search for the lowest loss model based on new features, target
-     * Our weekness is the loss model is only based on one new features. target. That may lead to
-     * a bit partial to new features
-     */
-    int best_rank = 1;
-
-    for (int i=2; i <= aqo_RANK; ++i)
-        if (eval_scores[best_rank] < eval_scores[i])
-            best_rank = i;
-
-    return best_rank;
+    else
+        return 0;
 }
 
 // int main() {
