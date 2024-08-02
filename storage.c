@@ -277,19 +277,18 @@ add_query_text(int qhash)
  * Returns false if the operation failed, true otherwise.
  *
  * 'fss_hash' is the hash of feature subspace which is supposed to be loaded
+ * 'rank' is the number of the best model's equation rank
  * 'ncols' is the number of clauses in the feature subspace
- * 'X_matrix' is an allocated memory for matrix with the size of aqo_K rows
- *			and nhashes columns
- * 'Y_matrix'
- * 'B_matrix'
- * 'rows' is the pointer in which the function stores actual number of
- *			objects in the given feature space
- * 'rank'
+ * 'X_matrix' is an allocated memory for square matrix with the size 
+ * ncols * aqo_RANK + 1
+ * 'Y_matrix' is an allocated memory for column matrix with the size
+ * ncols * aqo_RANK + 1
+ * 'B_matrix' is an allocated memory for column matrix with the size
+ * ncols * aqo_RANK + 1
  */
 bool
-load_fss(int fhash, int fss_hash,
-		 int ncols, double **X_matrix, double *Y_matrix, double *B_matrix, 
-         int *rows, int *rank)
+load_fss(int fhash, int fss_hash, int *rank,
+		 int ncols, double **X_matrix, double *Y_matrix, double *B_matrix)
 {
 	RangeVar	*rv;
 	Relation	hrel;
@@ -324,7 +323,7 @@ load_fss(int fhash, int fss_hash,
 	slot = MakeSingleTupleTableSlot(hrel->rd_att, &TTSOpsBufferHeapTuple);
 	find_ok = index_getnext_slot(scan, ForwardScanDirection, slot);
 
-	if (matrix == NULL && targets == NULL && rows == NULL)
+	if (matrix == NULL && targets == NULL && rank == NULL)
 	{
 		/* Just check availability */
 		success = find_ok;
@@ -335,22 +334,22 @@ load_fss(int fhash, int fss_hash,
 		Assert(shouldFree != true);
 		heap_deform_tuple(tuple, hrel->rd_att, values, isnull);
 
-		if (DatumGetInt32(values[2]) == ncols)
+		if (DatumGetInt32(values[3]) == ncols)
 		{
 			if (ncols > 0)
 				/*
 				 * The case than an object has not any filters and selectivities
 				 */
-				deform_matrix(values[3], X_matrix);
+				deform_matrix(values[4], X_matrix);
 
-			deform_vector(values[4], Y_matrix, rows);
-            deform_vector(values[5], B_matrix);
-            rank = DatumGetInt32(values[6]);
+			deform_vector(values[5], Y_matrix);
+            deform_vector(values[6], B_matrix);
+            rank = DatumGetInt32(values[2]);
 		}
 		else
 			elog(ERROR, "unexpected number of features for hash (%d, %d):\
 						   expected %d features, obtained %d",
-						   fhash, fss_hash, ncols, DatumGetInt32(values[2]));
+						   fhash, fss_hash, ncols, DatumGetInt32(values[3]));
 	}
 	else
 		success = false;
@@ -367,8 +366,8 @@ load_fss(int fhash, int fss_hash,
  * Updates the specified line in the specified feature subspace.
  * Returns false if the operation failed, true otherwise.
  *
- * 'fss_hash' specifies the feature subspace 'nrows' x 'ncols' is the shape
- * of 'matrix' 'targets' is vector of size 'nrows'
+ * 'fss_hash' specifies the feature subspace 'ncols * aqo_RANK + 1' x 'ncols * aqo_RANK + 1' is the shape
+ * of 'matrix' 'targets' is vector of size 'ncols * aqo_RANK + 1'
  *
  * Necessary to prevent waiting for another transaction to commit in index
  * insertion or heap update.
@@ -376,8 +375,8 @@ load_fss(int fhash, int fss_hash,
  * Caller guaranteed that no one AQO process insert or update this data row.
  */
 bool
-update_fss(int fhash, int fsshash, int nrows, int ncols,
-		   double **matrix, double *targets)
+update_fss(int fhash, int fsshash, int rank, int ncols,
+		   double **matrix, double *targets, double *bias)
 {
 	RangeVar   *rv;
 	Relation	hrel;
@@ -387,9 +386,9 @@ update_fss(int fhash, int fsshash, int nrows, int ncols,
 	TupleDesc	tupDesc;
 	HeapTuple	tuple,
 				nw_tuple;
-	Datum		values[5];
-	bool		isnull[5] = { false, false, false, false, false };
-	bool		replace[5] = { false, false, false, true, true };
+	Datum		values[7];
+	bool		isnull[7] = { false, false, false, false, false, false, false };
+	bool		replace[7] = { false, false, true, false, true, true, true };
 	bool		shouldFree;
 	bool		find_ok = false;
 	bool		update_indexes;
@@ -397,6 +396,7 @@ update_fss(int fhash, int fsshash, int nrows, int ncols,
 	IndexScanDesc scan;
 	ScanKeyData	key[2];
 	bool result = true;
+    int limit = ncols * aqo_RANK + 1;
 
 	/* Couldn't allow to write if xact must be read-only. */
 	if (XactReadOnly)
@@ -429,14 +429,17 @@ update_fss(int fhash, int fsshash, int nrows, int ncols,
 	{
 		values[0] = Int32GetDatum(fhash);
 		values[1] = Int32GetDatum(fsshash);
-		values[2] = Int32GetDatum(ncols);
+        values[2] = Int32GetDatum(rank);
+		values[3] = Int32GetDatum(ncols);
 
 		if (ncols > 0)
-			values[3] = PointerGetDatum(form_matrix(matrix, nrows, ncols));
+			values[4] = PointerGetDatum(form_matrix(matrix, limit, limit));
 		else
-			isnull[3] = true;
+			isnull[4] = true;
 
-		values[4] = PointerGetDatum(form_vector(targets, nrows));
+		values[5] = PointerGetDatum(form_vector(targets, limit));
+        values[6] = PointerGetDatum(form_vector(bias, limit));
+
 		tuple = heap_form_tuple(tupDesc, values, isnull);
 
 		/*
@@ -454,12 +457,16 @@ update_fss(int fhash, int fsshash, int nrows, int ncols,
 		Assert(shouldFree != true);
 		heap_deform_tuple(tuple, hrel->rd_att, values, isnull);
 
-		if (ncols > 0)
-			values[3] = PointerGetDatum(form_matrix(matrix, nrows, ncols));
-		else
-			isnull[3] = true;
+        values[2] = Int32GetDatum(rank);
 
-		values[4] = PointerGetDatum(form_vector(targets, nrows));
+		if (ncols > 0)
+			values[4] = PointerGetDatum(form_matrix(matrix, limit, limit));
+		else
+			isnull[4] = true;
+
+		values[5] = PointerGetDatum(form_vector(targets, limit));
+		values[6] = PointerGetDatum(form_vector(bias, limit));
+
 		nw_tuple = heap_modify_tuple(tuple, tupDesc,
 									 values, isnull, replace);
 		if (my_simple_heap_update(hrel, &(nw_tuple->t_self), nw_tuple,

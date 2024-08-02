@@ -29,11 +29,11 @@ CREATE TABLE public.aqo_query_stat (
 CREATE TABLE public.aqo_data (
 	fspace_hash		int NOT NULL REFERENCES public.aqo_queries ON DELETE CASCADE,
 	fsspace_hash	int NOT NULL,
+    rank            int NOT NULL,
 	nfeatures		int NOT NULL,
 	features		double precision[][],
 	targets			double precision[],
-    bias            double precision[],
-    rank            int NOT NULL
+    bias            double precision[]
 );
 
 CREATE UNIQUE INDEX aqo_fss_access_idx ON public.aqo_data (fspace_hash, fsspace_hash);
