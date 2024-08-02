@@ -73,21 +73,21 @@ static void RemoveFromQueryEnv(QueryDesc *queryDesc);
  * matrix and targets are just preallocated memory for computations.
  */
 static void
-atomic_fss_learn_step(int fhash, int fss_hash, int ncols,
-					  double **matrix, double *targets,
+atomic_fss_learn_step(int fhash, int fss_hash, int *rank, int ncols,
+					  double **X_matrix, double *Y_matrix, double *B_matrix, 
 					  double *features, double target)
 {
 	LOCKTAG	tag;
-	int		nrows;
+	int		rank;
 
 	init_lock_tag(&tag, (uint32) fhash, (uint32) fss_hash);
 	LockAcquire(&tag, ExclusiveLock, false, false);
 
-	if (!load_fss(fhash, fss_hash, ncols, matrix, targets, &nrows))
-		nrows = 0;
+	if (!load_fss(fhash, fss_hash, rank, ncols, X_matrix, Y_matrix, B_matrix))
+		ncols = 0;
 
-	nrows = OPRr_learn(nrows, ncols, matrix, targets, features, target);
-	update_fss(fhash, fss_hash, nrows, ncols, matrix, targets);
+	rank = OPRr_learn(X_matrix, Y_matrix, B_matrix, ncols, features, target);
+	update_fss(fhash, fss_hash, rank, ncols, X_matrix, Y_matrix, B_matrix);
 
 	LockRelease(&tag, ExclusiveLock, false);
 }
