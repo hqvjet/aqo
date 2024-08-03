@@ -287,10 +287,10 @@ extern bool find_query(int qhash, Datum *search_values, bool *search_nulls);
 extern bool update_query(int qhash, int fhash,
 						 bool learn_aqo, bool use_aqo, bool auto_tuning);
 extern bool add_query_text(int query_hash);
-extern bool load_fss(int fhash, int fss_hash,
-					 int ncols, double **matrix, double *targets, int *rows);
-extern bool update_fss(int fhash, int fss_hash, int nrows, int ncols,
-					   double **matrix, double *targets);
+extern bool load_fss(int fhash, int fss_hash, int *rank,
+		    int ncols, double **X_matrix, double *Y_matrix, double *B_matrix);
+extern bool update_fss(int fhash, int fsshash, int rank, int ncols,
+		    double **matrix, double *targets, double *bias);
 QueryStat  *get_aqo_stat(int query_hash);
 void		update_aqo_stat(int query_hash, QueryStat * stat);
 extern bool my_index_insert(Relation indexRelation,	Datum *values, bool *isnull,

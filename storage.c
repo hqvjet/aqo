@@ -323,7 +323,7 @@ load_fss(int fhash, int fss_hash, int *rank,
 	slot = MakeSingleTupleTableSlot(hrel->rd_att, &TTSOpsBufferHeapTuple);
 	find_ok = index_getnext_slot(scan, ForwardScanDirection, slot);
 
-	if (matrix == NULL && targets == NULL && rank == NULL)
+	if (X_matrix == NULL && Y_matrix == NULL && B_matrix == NULL && rank == NULL)
 	{
 		/* Just check availability */
 		success = find_ok;
@@ -336,15 +336,16 @@ load_fss(int fhash, int fss_hash, int *rank,
 
 		if (DatumGetInt32(values[3]) == ncols)
 		{
+            int limit = ncols * aqo_RANK + 1;
 			if (ncols > 0)
 				/*
 				 * The case than an object has not any filters and selectivities
 				 */
 				deform_matrix(values[4], X_matrix);
 
-			deform_vector(values[5], Y_matrix);
-            deform_vector(values[6], B_matrix);
-            rank = DatumGetInt32(values[2]);
+			deform_vector(values[5], Y_matrix, &limit);
+            deform_vector(values[6], B_matrix, &limit);
+            *rank = DatumGetInt32(values[2]);
 		}
 		else
 			elog(ERROR, "unexpected number of features for hash (%d, %d):\

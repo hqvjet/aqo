@@ -26,23 +26,29 @@ predict_for_relation(List *restrict_clauses, List *selectivities,
 					 List *relids, int *fss_hash)
 {
 	int		nfeatures;
-	double	*matrix[aqo_K];
-	double	targets[aqo_K];
 	double	*features;
+    int     rank;
+    int     limit;
 	double	result;
-	int		rows;
-	int		i;
+    int		i;
+    double	**X_matrix;
+	double	*Y_matrix;
+    double  *B_matrix;
 
 	*fss_hash = get_fss_for_object(restrict_clauses, selectivities, relids,
 														&nfeatures, &features);
+    limit = nfeatures * aqo_RANK + 1;
+    X_matrix = malloc(sizeof(double *) * limit);
+	Y_matrix = malloc(sizeof(double) * limit);
+    B_matrix = malloc(sizeof(double) * limit);
 
 	if (nfeatures > 0)
-		for (i = 0; i < aqo_K; ++i)
-			matrix[i] = palloc0(sizeof(**matrix) * nfeatures);
+		for (i = 0; i < limit; ++i)
+			X_matrix[i] = palloc0(sizeof(**X_matrix) * limit);
 
-	if (load_fss(query_context.fspace_hash, *fss_hash, nfeatures, matrix,
-				 targets, &rows))
-		result = OPRr_predict(rows, features);
+	if (load_fss(query_context.fspace_hash, *fss_hash, &rank, nfeatures, X_matrix,
+				 Y_matrix, B_matrix))
+		result = OPRr_predict(rank, nfeatures, features, B_matrix);
 	else
 	{
 		/*
@@ -55,10 +61,12 @@ predict_for_relation(List *restrict_clauses, List *selectivities,
 	}
 
 	pfree(features);
+    pfree(B_matrix);
+    pfree(Y_matrix);
 	if (nfeatures > 0)
 	{
-		for (i = 0; i < aqo_K; ++i)
-			pfree(matrix[i]);
+		for (i = 0; i < limit; ++i)
+			pfree(X_matrix[i]);
 	}
 
 	if (result < 0)

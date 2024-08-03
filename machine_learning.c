@@ -16,8 +16,14 @@
  */
 
 #include "aqo.h"
-#define aqo_RANK (3)
 #define EPSILON 1e-15
+
+static void update_X_matrix(int nfeatures, double **matrix, double *features);
+static void update_Y_matrix(int nfeatures, double *matrix, double *features, double target);
+static void update_B_matrix(int nfeatures, double **X_inverse, double *Y_matrix, double *B_matrix);
+static int calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_inverse);
+static void swapRows(double **A, int row1, int row2, int limit);
+static double evaluate(int rank, int nfeatures, double *B_matrix, double *features, double target);
 
 /*
  * Computes each weights of X matrix
@@ -83,7 +89,8 @@ update_B_matrix(int nfeatures, double **X_inverse, double *Y_matrix, double *B_m
             B_matrix[i] += X_inverse[i][j] * Y_matrix[j];
 }
 
-void swapRows(double **A, int row1, int row2, int limit) {
+void 
+swapRows(double **A, int row1, int row2, int limit) {
     for (int i = 0; i < limit; ++i) {
         double temp = A[row1][i];
         A[row1][i] = A[row2][i];
@@ -95,8 +102,10 @@ void swapRows(double **A, int row1, int row2, int limit) {
  * Computes inverse bias weight of model
  * We focus on using Gauss Jordan Elimination for solving inverse matrix
  */
-int calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_inverse) {
+int 
+calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_inverse) {
     int limit = nfeatures * aqo_RANK + 1;
+    double **temp_matrix;
 
     /*
      * Init inverse matrix
@@ -110,7 +119,7 @@ int calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_invers
     /*
      * Copy data from X matrix
      */
-    double **temp_matrix = (double **)malloc(limit * sizeof(double *));
+    temp_matrix = (double **)malloc(limit * sizeof(double *));
     for (int i = 0; i < limit; i++) {
         temp_matrix[i] = (double *)malloc(limit * sizeof(double));
     }
@@ -126,6 +135,7 @@ int calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_invers
      */
     for (int i = 0; i < limit; i++) {
         int pivot = i;
+        double pivotValue;
         for (int j = i + 1; j < limit; j++) {
             if (fabs(temp_matrix[j][i]) > fabs(temp_matrix[pivot][i])) {
                 pivot = j;
@@ -144,7 +154,7 @@ int calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_invers
             swapRows(X_inverse, i, pivot, limit);
         }
 
-        double pivotValue = temp_matrix[i][i];
+        pivotValue = temp_matrix[i][i];
         for (int j = 0; j < limit; ++j) {
             temp_matrix[i][j] /= pivotValue;
             X_inverse[i][j] /= pivotValue;
@@ -207,9 +217,10 @@ OPRr_predict(int rank, int ncols, double *features, double *bias)
     /*
      * Calculate output value based on bias weight of model
      */
-    for (int i=0; i<rank; ++i)
-        for (int j=0; j<ncols; ++j) 
+    for (int i = 0; i < rank; ++i) {
+        for (int j = 0; j < ncols; ++j) 
             result += bias[i*rank + j + 1] * pow(features[j], i + 1);
+    }
 
 	return result;
 }
@@ -229,9 +240,10 @@ OPRr_learn(double **X_matrix, double *Y_matrix, double *B_matrix, int nfeatures,
 {
     int limit = nfeatures * aqo_RANK + 1;
     double **X_inverse = (double **)malloc(limit * sizeof(double *));
+    double eval_scores[3];
+
     for (int i = 0; i < limit; ++i)
         X_inverse[i] = (double *)malloc((limit) * sizeof(double));
-    double eval_scores[3];
 
     /*
      * We plus new features into these matrices for learning
@@ -246,6 +258,8 @@ OPRr_learn(double **X_matrix, double *Y_matrix, double *B_matrix, int nfeatures,
      * Later, we will use pseudo inverse for non-inversible matrix
      */
     if (calculate_inverse_matrix(nfeatures, X_matrix, X_inverse)) {
+        int best_rank = 1;
+
         update_B_matrix(nfeatures, X_matrix, Y_matrix, B_matrix);
 
         for (int rank = 1; rank <= aqo_RANK; ++rank) 
@@ -256,9 +270,8 @@ OPRr_learn(double **X_matrix, double *Y_matrix, double *B_matrix, int nfeatures,
          * Our weekness is the loss model is only based on one new features. target. That may lead to
          * a bit partial to new features
          */
-        int best_rank = 1;
 
-        for (int i=2; i <= aqo_RANK; ++i)
+        for (int i = 1; i < aqo_RANK; ++i)
             if (eval_scores[best_rank] < eval_scores[i])
                 best_rank = i;
 
