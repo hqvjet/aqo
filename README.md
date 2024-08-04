@@ -7,5 +7,5 @@ improvement sometimes provides an enormously large speed-up for rather
 complicated queries.
 
 ## Info
-I focus on machine_learning.c, replace 3NN online by Mutiple Polynomial Regression online.
+I replace 3NN online by Mutiple Polynomial Regression online.
 This repo is still under development
