@@ -8,4 +8,4 @@ complicated queries.
 
 ## Info
 I replace 3NN online by Mutiple Polynomial Regression online.
-This repo is still under development
+This repo is now currently usable.
