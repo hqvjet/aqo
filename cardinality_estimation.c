@@ -38,13 +38,13 @@ predict_for_relation(List *restrict_clauses, List *selectivities,
 	*fss_hash = get_fss_for_object(restrict_clauses, selectivities, relids,
 														&nfeatures, &features);
     limit = nfeatures * aqo_RANK + 1;
-    X_matrix = malloc(sizeof(double *) * limit);
-	Y_matrix = malloc(sizeof(double) * limit);
-    B_matrix = malloc(sizeof(double) * limit);
+    X_matrix = (double **) palloc(sizeof(double *) * limit);
+	Y_matrix = (double *) palloc(sizeof(double) * limit);
+    B_matrix = (double *) palloc(sizeof(double) * limit);
 
 	if (nfeatures > 0)
 		for (i = 0; i < limit; ++i)
-			X_matrix[i] = palloc0(sizeof(**X_matrix) * limit);
+			X_matrix[i] = palloc(sizeof(**X_matrix) * limit);
 
 	if (load_fss(query_context.fspace_hash, *fss_hash, &rank, nfeatures, X_matrix,
 				 Y_matrix, B_matrix))

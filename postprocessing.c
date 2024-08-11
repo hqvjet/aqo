@@ -83,11 +83,21 @@ atomic_fss_learn_step(int fhash, int fss_hash, int ncols,
 	init_lock_tag(&tag, (uint32) fhash, (uint32) fss_hash);
 	LockAcquire(&tag, ExclusiveLock, false, false);
 
-	if (!load_fss(fhash, fss_hash, &rank, ncols, X_matrix, Y_matrix, B_matrix))
-		ncols = 0;
+	if (!load_fss(fhash, fss_hash, &rank, ncols, X_matrix, Y_matrix, B_matrix)) {
+        /*
+         * There is no feature in this fss, so we do initialize zeroes matrices  
+         */
+        int limit = ncols * aqo_RANK + 1;
+        for (int i = 0; i < limit; ++i)
+            X_matrix[i] = (double *) palloc0(sizeof(double) * limit);
+        Y_matrix = (double *) palloc0(sizeof(double) * limit);
+        B_matrix = (double *) palloc0(sizeof(double) * limit);
+    }
 
-	rank = OPRr_learn(X_matrix, Y_matrix, B_matrix, ncols, features, target);
-	update_fss(fhash, fss_hash, rank, ncols, X_matrix, Y_matrix, B_matrix);
+    if (ncols > 0) {
+        rank = OPRr_learn(X_matrix, Y_matrix, B_matrix, ncols, features, target);
+        update_fss(fhash, fss_hash, rank, ncols, X_matrix, Y_matrix, B_matrix);
+    }
 
 	LockRelease(&tag, ExclusiveLock, false);
 }
@@ -115,9 +125,10 @@ learn_sample(List *clauselist, List *selectivities, List *relidslist,
 	fss_hash = get_fss_for_object(clauselist, selectivities, relidslist,
 								  &nfeatures, &features);
     limit = nfeatures * aqo_RANK + 1;
-    X_matrix = malloc(sizeof(double*) * limit);
-    Y_matrix = malloc(sizeof(double) * limit);
-    B_matrix = malloc(sizeof(double) * limit);
+
+    X_matrix = (double **) palloc(limit * sizeof(double *));
+    Y_matrix = (double *) palloc(limit * sizeof(double));
+    B_matrix = (double *) palloc(limit * sizeof(double));
 
 	if (aqo_log_ignorance && load_fss(fhash, fss_hash, NULL, 0, NULL, NULL, NULL))
 	{

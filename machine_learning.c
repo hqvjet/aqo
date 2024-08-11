@@ -53,13 +53,6 @@ update_X_matrix(int nfeatures, double **matrix, double *features) {
         }
     }
 
-    // printf
-//     printf("X matrix:\n");
-//     for (int i = 0; i < limit; ++i) {
-//         for (int j = 0; j < limit; ++j)
-//             printf("%f ", matrix[i][j]);
-//         printf("\n");
-//     }
 }
 
 /*
@@ -119,9 +112,9 @@ calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_inverse) {
     /*
      * Copy data from X matrix
      */
-    temp_matrix = (double **)malloc(limit * sizeof(double *));
+    temp_matrix = (double **) palloc(limit * sizeof(double *));
     for (int i = 0; i < limit; i++) {
-        temp_matrix[i] = (double *)malloc(limit * sizeof(double));
+        temp_matrix[i] = (double *) palloc(limit * sizeof(double));
     }
 
     for (int i = 0; i < limit; i++) {
@@ -146,6 +139,9 @@ calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_inverse) {
          * Check for if matrix is invertible
          */
         if (fabs(temp_matrix[pivot][i]) < EPSILON) {
+            for (int i = 0; i < limit; i++) {
+                pfree(temp_matrix[i]);
+            }
             return 0; 
         }
 
@@ -170,41 +166,6 @@ calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_inverse) {
             }
         }
     }
-
-    // printf("X inverse:\n");
-    // for (int i = 0; i < limit; ++i) {
-    //     for (int j = 0; j < limit; ++j)
-    //         printf("%f ", X_inverse[i][j]);
-    //     printf("\n");
-    // }
-    //
-    // double I[limit][limit];
-    //
-    // for (int i = 0; i < limit; ++i) {
-    //     for (int j = 0; j <limit; ++j) {
-    //         I[i][j] = 0;
-    //     }
-    // }
-    //
-    // for (int i = 0; i < limit; ++i) {
-    //     for (int j = 0; j <limit; ++j) {
-    //         for (int k = 0; k < limit; ++k)
-    //             I[i][j] += X_matrix[i][k] * X_inverse[k][j];
-    //     }
-    // }
-    //
-    // printf("I matrix:\n");
-    // for (int i = 0; i < limit; ++i) {
-    //     for (int j = 0; j < limit; ++j)
-    //         printf("%f ", I[i][j]);
-    //     printf("\n");
-    // }
-    // printf("Temp matrix:\n");
-    // for (int i = 0; i < limit; ++i) {
-    //     for (int j = 0; j < limit; ++j)
-    //         printf("%f ", temp_matrix[i][j]);
-    //     printf("\n");
-    // }
 
     return 1;
 }
@@ -239,11 +200,12 @@ OPRr_learn(double **X_matrix, double *Y_matrix, double *B_matrix, int nfeatures,
                         double *features, double target)
 {
     int limit = nfeatures * aqo_RANK + 1;
-    double **X_inverse = (double **)malloc(limit * sizeof(double *));
+    double **X_inverse = (double **) palloc(sizeof(double *) * limit);
     double eval_scores[3];
+    int best_rank = 1;
 
     for (int i = 0; i < limit; ++i)
-        X_inverse[i] = (double *)malloc((limit) * sizeof(double));
+        X_inverse[i] = (double *) palloc((limit) * sizeof(double));
 
     /*
      * We plus new features into these matrices for learning
@@ -258,7 +220,6 @@ OPRr_learn(double **X_matrix, double *Y_matrix, double *B_matrix, int nfeatures,
      * Later, we will use pseudo inverse for non-inversible matrix
      */
     if (calculate_inverse_matrix(nfeatures, X_matrix, X_inverse)) {
-        int best_rank = 1;
 
         update_B_matrix(nfeatures, X_matrix, Y_matrix, B_matrix);
 
@@ -274,92 +235,11 @@ OPRr_learn(double **X_matrix, double *Y_matrix, double *B_matrix, int nfeatures,
         for (int i = 1; i < aqo_RANK; ++i)
             if (eval_scores[best_rank] < eval_scores[i])
                 best_rank = i;
-
-        return best_rank;
     }
     else
-        return 0;
-}
+        best_rank = 0;
 
-// int main() {
-//     int nfeatures = 3;
-//     int rank = 2;
-//     int limit = nfeatures * aqo_RANK + 1;
-//     double target;
-//     double **X_matrix = (double **)malloc(limit * sizeof(double *));
-//     for (int i=0; i<limit; ++i)
-//         X_matrix[i] = (double *)malloc(limit * sizeof(double));
-//
-//     for (int i = 0; i < limit; ++i)
-//         for (int j=0; j <= i; ++j)
-//             X_matrix[i][j] = 0.0;
-//
-//     double *Y_matrix = (double *)malloc(limit * sizeof(double));
-//     for (int i=0; i<limit; ++i)
-//         Y_matrix[i] = 0.0;
-//
-//     double *B_matrix = (double *)malloc(limit * sizeof(double));
-//
-//     double *features = (double *)malloc(nfeatures * sizeof(double));
-//
-//     features[0] = 0.123450;
-//     features[1] = 0.223450;
-//     features[2] = 0.323450;
-//     target = 2.8883333;
-//     int a = OPRr_learn(X_matrix, Y_matrix, B_matrix, nfeatures, features, target);
-//
-//     features[0] = 0.5488;
-//     features[1] = 0.7152;
-//     features[2] = 0.6028;
-//     target = 2.8883333;
-//     a = OPRr_learn(X_matrix, Y_matrix, B_matrix, nfeatures, features, target);
-//
-//     features[0] = 0.4435;
-//     features[1] = 0.00443;
-//     features[2] = 0.23;
-//     target = 1.3234;
-//     a = OPRr_learn(X_matrix, Y_matrix, B_matrix, nfeatures, features, target);
-//
-//     features[0] = 0.88;
-//     features[1] = 0.52;
-//     features[2] = 0.28;
-//     target = 3.21;
-//     a = OPRr_learn(X_matrix, Y_matrix, B_matrix, nfeatures, features, target);
-//
-//     features[0] = 0.43823;
-//     features[1] = 0.344524;
-//     features[2] = 0.48742;
-//     target = 1.56;
-//     a = OPRr_learn(X_matrix, Y_matrix, B_matrix, nfeatures, features, target);
-//
-//     features[0] = 0.3564273;
-//     features[1] = 0.9843;
-//     features[2] = 0.124;
-//     target = 3.91;
-//     a = OPRr_learn(X_matrix, Y_matrix, B_matrix, nfeatures, features, target);
-//
-//     features[0] = 0.42345;
-//     features[1] = 0.434441;
-//     features[2] = 0.200231;
-//     target = 1.21;
-//     a = OPRr_learn(X_matrix, Y_matrix, B_matrix, nfeatures, features, target);
-//
-//     features[0] = 0.31123213;
-//     features[1] = 0.00023842;
-//     features[2] = 0.11;
-//     target = 2.22;
-//     a = OPRr_learn(X_matrix, Y_matrix, B_matrix, nfeatures, features, target);
-//
-//     features[0] = 0.32411;
-//     features[1] = 0.66453;
-//     features[2] = 0.12434;
-//     target = 2.3234;
-//     a = OPRr_learn(X_matrix, Y_matrix, B_matrix, nfeatures, features, target);
-//
-//     features[0] = 0.23213;
-//     features[1] = 0.0123842;
-//     features[2] = 0.34411123;
-//     target = 2.123;
-//     a = OPRr_learn(X_matrix, Y_matrix, B_matrix, nfeatures, features, target);
-//     printf("Best rank: %d\n", a);
-// }
+    pfree(X_inverse);
+
+    return best_rank;
+}
