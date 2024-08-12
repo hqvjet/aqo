@@ -175,12 +175,18 @@ OPRr_predict(int rank, int ncols, double *features, double *bias)
 {
     double result = bias[0];
 
-    /*
-     * Calculate output value based on bias weight of model
-     */
-    for (int i = 0; i < rank; ++i) {
-        for (int j = 0; j < ncols; ++j) 
-            result += bias[i*rank + j + 1] * pow(features[j], i + 1);
+    if (rank > 0) {
+        /*
+         * Calculate output value based on bias weight of model
+         */
+        for (int i = 0; i < rank; ++i) {
+            for (int j = 0; j < ncols; ++j) 
+                result += bias[i*rank + j + 1] * pow(features[j], i + 1);
+        }
+    }
+
+    else {
+        result = -1;
     }
 
 	return result;
