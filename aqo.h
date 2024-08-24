@@ -236,6 +236,7 @@ extern double auto_tuning_convergence_error;
 
 /* Max number of matrix rows - max number of possible neighbors. */
 #define	aqo_RANK	(3)
+#define max_feature_number_threshold (10)
 
 extern const double object_selection_prediction_threshold;
 extern const double object_selection_threshold;
@@ -346,7 +347,7 @@ List	   *get_path_clauses(Path *path, PlannerInfo *root, List **selectivities);
 
 /* Cardinality estimation */
 double predict_for_relation(List *restrict_clauses, List *selectivities,
-					 List *relids, int *fss_hash);
+					 List *relids, int *fss_hash, double *feature_number);
 
 /* Query execution statistics collecting hooks */
 void		aqo_ExecutorStart(QueryDesc *queryDesc, int eflags);

@@ -16,13 +16,14 @@
  */
 
 #include "aqo.h"
+#include <float.h>
 #define EPSILON 1e-15
+
 
 static void update_X_matrix(int nfeatures, double **matrix, double *features);
 static void update_Y_matrix(int nfeatures, double *matrix, double *features, double target);
 static void update_B_matrix(int nfeatures, double **X_inverse, double *Y_matrix, double *B_matrix);
 static int calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_inverse);
-static void swapRows(double **A, int row1, int row2, int limit);
 static double evaluate(int rank, int nfeatures, double *B_matrix, double *features, double target);
 
 /*
@@ -52,7 +53,6 @@ update_X_matrix(int nfeatures, double **matrix, double *features) {
                 matrix[i][j] += 1.0;
         }
     }
-
 }
 
 /*
@@ -82,87 +82,77 @@ update_B_matrix(int nfeatures, double **X_inverse, double *Y_matrix, double *B_m
             B_matrix[i] += X_inverse[i][j] * Y_matrix[j];
 }
 
-void 
-swapRows(double **A, int row1, int row2, int limit) {
-    for (int i = 0; i < limit; ++i) {
-        double temp = A[row1][i];
-        A[row1][i] = A[row2][i];
-        A[row2][i] = temp;
-    }
-}
-
 /*
  * Computes inverse bias weight of model
- * We focus on using Gauss Jordan Elimination for solving inverse matrix
+ * We focus on using Cholesky Decomposition for solving inverse matrix
  */
 int 
 calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_inverse) {
     int limit = nfeatures * aqo_RANK + 1;
-    double **temp_matrix;
 
     /*
-     * Init inverse matrix
+     * Let X = L.L^(-1), we calculate L matrix by below code
      */
+    double **L = (double **) palloc(sizeof(double*) * limit);
+    double **inv_L = (double **) palloc(sizeof(double*) * limit);
+
+    for (int i = 0; i < limit; ++i)
+        L[i] = (double *) palloc(sizeof(double) * limit);
+    for (int i = 0; i < limit; ++i)
+        inv_L[i] = (double *) palloc(sizeof(double) * limit);
+
+
+    for (int i = 0; i < limit; ++i) {
+        for (int j = 0; j <= i; ++j) {
+            double sum = 0.0;
+            for (int k = 0; k < j; ++k) {
+                sum += L[i][k] * L[j][k];
+            }
+
+            if (i == j) {
+                int L_sqrt = X_matrix[i][j] - sum;
+                /*
+                 * if matrix diagonal is not sastified positive definition, then return false
+                 */
+                if (L_sqrt <= EPSILON)
+                    return 0;
+
+                L[i][j] = sqrt(L_sqrt);
+            } else {
+                L[i][j] = (X_matrix[i][j] - sum) / L[j][j];
+            }
+        }
+    }
+
+    /*
+     * After that, We will find L^(-1)
+     */
+
+    for (int i = 0; i < limit; ++i) {
+        for (int j = 0; j <= i; ++j) {
+            double minus = 0.0;
+            for (int k = j; k < limit - 1; ++k) {
+                minus -= L[i][k] * inv_L[k][j];
+            }
+            if (i == j) {
+                inv_L[i][j] = 1.0 / L[i][j];
+            }
+            else {
+                inv_L[i][j] = (minus * 1.0) / L[i][i]; 
+            }
+            if (isinf(inv_L[i][j]))
+                elog(ERROR, "Overflow occurred!\n");
+        }
+    }
+    /*
+     * Finally, We have L and L^(-1), now we will calculate inverse matrix by
+     * X = L.L^T <=> X^(-1) = (L^T)^(-1).L^(-1)
+     */
+
     for (int i = 0; i < limit; ++i) {
         for (int j = 0; j < limit; ++j) {
-            X_inverse[i][j] = (i == j) ? 1.0 : 0.0;
-        }
-    }
-
-    /*
-     * Copy data from X matrix
-     */
-    temp_matrix = (double **) palloc(limit * sizeof(double *));
-    for (int i = 0; i < limit; i++) {
-        temp_matrix[i] = (double *) palloc(limit * sizeof(double));
-    }
-
-    for (int i = 0; i < limit; i++) {
-        for (int j = 0; j < limit; j++) {
-            temp_matrix[i][j] = X_matrix[i][j];
-        }
-    }
-
-    /*
-     * Gauss Jordan Elimination
-     */
-    for (int i = 0; i < limit; i++) {
-        int pivot = i;
-        double pivotValue;
-        for (int j = i + 1; j < limit; j++) {
-            if (fabs(temp_matrix[j][i]) > fabs(temp_matrix[pivot][i])) {
-                pivot = j;
-            }
-        }
-
-        /*
-         * Check for if matrix is invertible
-         */
-        if (fabs(temp_matrix[pivot][i]) < EPSILON) {
-            for (int i = 0; i < limit; i++) {
-                pfree(temp_matrix[i]);
-            }
-            return 0; 
-        }
-
-        if (pivot != i) {
-            swapRows(temp_matrix, i, pivot, limit);
-            swapRows(X_inverse, i, pivot, limit);
-        }
-
-        pivotValue = temp_matrix[i][i];
-        for (int j = 0; j < limit; ++j) {
-            temp_matrix[i][j] /= pivotValue;
-            X_inverse[i][j] /= pivotValue;
-        }
-
-        for (int k = 0; k < limit; ++k) {
-            if (k != i) {
-                double factor = temp_matrix[k][i];
-                for (int j = 0; j < limit; j++) {
-                    temp_matrix[k][j] -= factor * temp_matrix[i][j];
-                    X_inverse[k][j] -= factor * X_inverse[i][j];
-                }
+            for (int k = 0; k < limit; ++k) {
+                X_inverse[i][j] += inv_L[k][i] * inv_L[k][j]; 
             }
         }
     }
@@ -170,6 +160,9 @@ calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_inverse) {
     return 1;
 }
 
+/*
+ * Use for predicting cardinality
+ */
 double
 OPRr_predict(int rank, int ncols, double *features, double *bias)
 {
@@ -182,12 +175,17 @@ OPRr_predict(int rank, int ncols, double *features, double *bias)
         for (int i = 0; i < rank; ++i) {
             for (int j = 0; j < ncols; ++j) 
                 result += bias[i*rank + j + 1] * pow(features[j], i + 1);
+
+        if (result < 0)
+            result = 0;
+
         }
     }
 
     else {
         result = -1;
     }
+
 
 	return result;
 }
