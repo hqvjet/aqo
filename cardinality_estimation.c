@@ -23,7 +23,7 @@
  */
 double
 predict_for_relation(List *restrict_clauses, List *selectivities,
-					 List *relids, int *fss_hash, double *feature_num)
+					 List *relids, int *fss_hash)
 {
 	int		nfeatures;
 	double	*features;
@@ -48,8 +48,12 @@ predict_for_relation(List *restrict_clauses, List *selectivities,
 
 	if (load_fss(query_context.fspace_hash, *fss_hash, &rank, nfeatures, X_matrix,
 				 Y_matrix, B_matrix)) {
-        feature_num = &X_matrix[0][0];
-		result = OPRr_predict(rank, nfeatures, features, B_matrix);
+        if (X_matrix[0][0] <= max_feature_number_threshold) {
+            result = -1;
+        }
+        else {
+            result = OPRr_predict(rank, nfeatures, features, B_matrix);
+        }
     }
 	else
 	{
@@ -71,8 +75,8 @@ predict_for_relation(List *restrict_clauses, List *selectivities,
 			pfree(X_matrix[i]);
 	}
 
-	if (result < 0)
-		return -1;
+	if (result == -1)
+		return result;
 	else
-		return clamp_row_est(exp(result));
+		return clamp_row_est(exp(fabs(result)));
 }

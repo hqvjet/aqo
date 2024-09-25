@@ -16,15 +16,33 @@
  */
 
 #include "aqo.h"
-#include <float.h>
 #define EPSILON 1e-15
-
 
 static void update_X_matrix(int nfeatures, double **matrix, double *features);
 static void update_Y_matrix(int nfeatures, double *matrix, double *features, double target);
 static void update_B_matrix(int nfeatures, double **X_inverse, double *Y_matrix, double *B_matrix);
 static int calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_inverse);
 static double evaluate(int rank, int nfeatures, double *B_matrix, double *features, double target);
+static double calculate_l2_regularization(int nfeatures, double **X_matrix);
+
+/*
+ * Computes L2 to X matrix
+ */
+double
+calculate_l2_regularization(int limit, double **matrix) {
+    double l2 = 0.0;
+
+    /*
+     * Calculate L2 by 1% of averaging diagonal values of X matrix
+     */
+    for (int i = 0; i < limit; ++i) {
+        l2 += matrix[i][i];
+    }
+
+    l2 = 0.01 * (l2 / limit);
+
+    return l2;
+}
 
 /*
  * Computes each weights of X matrix
@@ -89,6 +107,8 @@ update_B_matrix(int nfeatures, double **X_inverse, double *Y_matrix, double *B_m
 int 
 calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_inverse) {
     int limit = nfeatures * aqo_RANK + 1;
+    // double l2 = calculate_l2_regularization(limit, X_matrix);
+    double l2 = 1e-10;
 
     /*
      * Let X = L.L^(-1), we calculate L matrix by below code
@@ -101,7 +121,6 @@ calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_inverse) {
     for (int i = 0; i < limit; ++i)
         inv_L[i] = (double *) palloc(sizeof(double) * limit);
 
-
     for (int i = 0; i < limit; ++i) {
         for (int j = 0; j <= i; ++j) {
             double sum = 0.0;
@@ -111,6 +130,8 @@ calculate_inverse_matrix(int nfeatures, double **X_matrix, double **X_inverse) {
 
             if (i == j) {
                 int L_sqrt = X_matrix[i][j] - sum;
+                if (i != 0)
+                    L_sqrt += l2;
                 /*
                  * if matrix diagonal is not sastified positive definition, then return false
                  */
@@ -167,6 +188,7 @@ double
 OPRr_predict(int rank, int ncols, double *features, double *bias)
 {
     double result = bias[0];
+    elog(WARNING, "Rank: %d", rank);
 
     if (rank > 0) {
         /*
@@ -175,10 +197,6 @@ OPRr_predict(int rank, int ncols, double *features, double *bias)
         for (int i = 0; i < rank; ++i) {
             for (int j = 0; j < ncols; ++j) 
                 result += bias[i*rank + j + 1] * pow(features[j], i + 1);
-
-        if (result < 0)
-            result = 0;
-
         }
     }
 
@@ -208,6 +226,8 @@ OPRr_learn(double **X_matrix, double *Y_matrix, double *B_matrix, int nfeatures,
     double eval_scores[3];
     int best_rank = 1;
 
+    elog(WARNING, "First ele: %f", X_matrix[0][0]);
+
     for (int i = 0; i < limit; ++i)
         X_inverse[i] = (double *) palloc((limit) * sizeof(double));
 
@@ -225,6 +245,7 @@ OPRr_learn(double **X_matrix, double *Y_matrix, double *B_matrix, int nfeatures,
      */
     if (calculate_inverse_matrix(nfeatures, X_matrix, X_inverse)) {
 
+        elog(WARNING, "Matrix is inversible!");
         update_B_matrix(nfeatures, X_matrix, Y_matrix, B_matrix);
 
         for (int rank = 1; rank <= aqo_RANK; ++rank) 
@@ -240,8 +261,10 @@ OPRr_learn(double **X_matrix, double *Y_matrix, double *B_matrix, int nfeatures,
             if (eval_scores[best_rank] < eval_scores[i])
                 best_rank = i;
     }
-    else
+    else {
         best_rank = 0;
+        elog(WARNING, "Matrix is singular!");
+    }
 
     pfree(X_inverse);
 

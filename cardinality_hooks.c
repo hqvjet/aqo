@@ -138,7 +138,6 @@ aqo_set_baserel_rows_estimate(PlannerInfo *root, RelOptInfo *rel)
 	List	   *selectivities = NULL;
 	List	*restrict_clauses;
 	int fss = 0;
-    double feature_num = 0;
 
 	if (query_context.use_aqo)
 		selectivities = get_selectivities(root, rel->baserestrictinfo, 0,
@@ -155,18 +154,20 @@ aqo_set_baserel_rows_estimate(PlannerInfo *root, RelOptInfo *rel)
 
 	restrict_clauses = list_copy(rel->baserestrictinfo);
 	predicted = predict_for_relation(restrict_clauses,selectivities,
-									 relids, &fss, &feature_num);
+									 relids, &fss);
 	rel->fss_hash = fss;
 
-	if (predicted >= 0 && (int)feature_num > max_feature_number_threshold)
+	if (predicted >= 0)
 	{
 		rel->rows = predicted;
 		rel->predicted_cardinality = predicted;
+        elog(WARNING, "use aqo planner, predicted rows: %f", predicted);
 	}
 	else
 	{
 		call_default_set_baserel_rows_estimate(root, rel);
 		rel->predicted_cardinality = -1.;
+        elog(WARNING, "use default planner, predicted rows: %f", predicted);
 	}
 
 	list_free_deep(selectivities);
@@ -204,7 +205,6 @@ aqo_get_parameterized_baserel_size(PlannerInfo *root,
 	int		   *eclass_hash;
 	int			current_hash;
 	int         fss = 0;
-    double      feature_num = 0;
 
 	if (query_context.use_aqo)
 	{
@@ -240,12 +240,12 @@ aqo_get_parameterized_baserel_size(PlannerInfo *root,
 
 	relids = list_make1_int(relid);
 
-	predicted = predict_for_relation(allclauses, selectivities, relids, &fss, &feature_num);
+	predicted = predict_for_relation(allclauses, selectivities, relids, &fss);
 
 	predicted_ppi_rows = predicted;
 	fss_ppi_hash = fss;
 
-	if (predicted >= 0 && feature_num > max_feature_number_threshold)
+	if (predicted >= 0)
 		return predicted;
 	else
 		return call_default_get_parameterized_baserel_size(root, rel,
@@ -274,7 +274,6 @@ aqo_set_joinrel_size_estimates(PlannerInfo *root, RelOptInfo *rel,
 	List	   *outer_selectivities;
 	List	   *current_selectivities = NULL;
 	int         fss = 0;
-    double      feature_num = 0;
 
 	if (query_context.use_aqo)
 		current_selectivities = get_selectivities(root, restrictlist, 0,
@@ -301,10 +300,10 @@ aqo_set_joinrel_size_estimates(PlannerInfo *root, RelOptInfo *rel,
 								list_concat(outer_selectivities,
 											inner_selectivities));
 
-	predicted = predict_for_relation(allclauses, selectivities, relids, &fss, &feature_num);
+	predicted = predict_for_relation(allclauses, selectivities, relids, &fss);
 	rel->fss_hash = fss;
 
-	if (predicted >= 0 && feature_num > max_feature_number_threshold)
+	if (predicted >= 0)
 	{
 		rel->predicted_cardinality = predicted;
 		rel->rows = predicted;
@@ -343,7 +342,6 @@ aqo_get_parameterized_joinrel_size(PlannerInfo *root,
 	List	   *outer_selectivities;
 	List	   *current_selectivities = NULL;
 	int			fss = 0;
-    double      feature_num = 0;
 
 	if (query_context.use_aqo)
 		current_selectivities = get_selectivities(root, restrict_clauses, 0,
@@ -367,12 +365,12 @@ aqo_get_parameterized_joinrel_size(PlannerInfo *root,
 								list_concat(outer_selectivities,
 											inner_selectivities));
 
-	predicted = predict_for_relation(allclauses, selectivities, relids, &fss, &feature_num);
+	predicted = predict_for_relation(allclauses, selectivities, relids, &fss);
 
 	predicted_ppi_rows = predicted;
 	fss_ppi_hash = fss;
 
-	if (predicted >= 0 && feature_num > max_feature_number_threshold)
+	if (predicted >= 0)
 		return predicted;
 	else
 		return call_default_get_parameterized_joinrel_size(root, rel,

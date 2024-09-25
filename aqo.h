@@ -347,7 +347,7 @@ List	   *get_path_clauses(Path *path, PlannerInfo *root, List **selectivities);
 
 /* Cardinality estimation */
 double predict_for_relation(List *restrict_clauses, List *selectivities,
-					 List *relids, int *fss_hash, double *feature_number);
+					 List *relids, int *fss_hash);
 
 /* Query execution statistics collecting hooks */
 void		aqo_ExecutorStart(QueryDesc *queryDesc, int eflags);

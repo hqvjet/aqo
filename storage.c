@@ -326,6 +326,7 @@ load_fss(int fhash, int fss_hash, int *rank,
 	if (X_matrix == NULL && Y_matrix == NULL && B_matrix == NULL && rank == NULL)
 	{
 		/* Just check availability */
+        elog(WARNING, "NULL Variable - HQVJET");
 		success = find_ok;
 	}
 	else if (find_ok)
