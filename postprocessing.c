@@ -45,7 +45,8 @@ static char *PlanStateInfo = "PlanStateInfo";
 /* Query execution statistics collecting utilities */
 static void atomic_fss_learn_step(int fhash, int fss_hash, int ncols,
 								  double **matrix, double *targets,
-								  double *features, double target);
+								  double *features, double target,
+                                  double *w, double *m, double *v, int w_len);
 static void learn_sample(List *clauselist,
 						 List *selectivities,
 						 List *relidslist,
@@ -75,7 +76,8 @@ static void RemoveFromQueryEnv(QueryDesc *queryDesc);
 static void
 atomic_fss_learn_step(int fhash, int fss_hash, int ncols,
 					  double **matrix, double *targets,
-					  double *features, double target)
+					  double *features, double target,
+                      double *w, double *m, double *v, int w_len)
 {
 	LOCKTAG	tag;
 	int		nrows;
@@ -83,11 +85,11 @@ atomic_fss_learn_step(int fhash, int fss_hash, int ncols,
 	init_lock_tag(&tag, (uint32) fhash, (uint32) fss_hash);
 	LockAcquire(&tag, ExclusiveLock, false, false);
 
-	if (!load_fss(fhash, fss_hash, ncols, matrix, targets, &nrows))
-		nrows = 0;
+	if (!load_fss(fhash, fss_hash, ncols, matrix, targets, w, m, v, &nrows))
+        nrows = 0;
 
-	nrows = OkNNr_learn(nrows, ncols, matrix, targets, features, target);
-	update_fss(fhash, fss_hash, nrows, ncols, matrix, targets);
+	nrows = OPRr_learn(nrows, ncols, matrix, targets, features, target, w, m ,v);
+	update_fss(fhash, fss_hash, nrows, ncols, matrix, targets, w, m, v);
 
 	LockRelease(&tag, ExclusiveLock, false);
 }
@@ -105,15 +107,19 @@ learn_sample(List *clauselist, List *selectivities, List *relidslist,
 	double	*matrix[aqo_K];
 	double	targets[aqo_K];
 	double	*features;
+    double  *w;
+    double  *m;
+    double  *v;
 	double	target;
 	int		i;
+    int     w_len;
 
 	target = log(true_cardinality);
 
 	fss_hash = get_fss_for_object(clauselist, selectivities, relidslist,
 								  &nfeatures, &features);
 
-	if (aqo_log_ignorance && load_fss(fhash, fss_hash, 0, NULL, NULL, NULL))
+	if (aqo_log_ignorance && load_fss(fhash, fss_hash, 0, NULL, NULL, NULL, NULL, NULL, NULL))
 	{
 		/*
 		 * If ignorance logging is enabled and the feature space was existed in
@@ -122,20 +128,31 @@ learn_sample(List *clauselist, List *selectivities, List *relidslist,
 		update_ignorance(query_context.query_hash, fhash, fss_hash, plan);
 	}
 
+    w_len = aqo_RANK * nfeatures + 1;
 	if (nfeatures > 0)
 		for (i = 0; i < aqo_K; ++i)
-			matrix[i] = palloc(sizeof(double) * nfeatures);
+            matrix[i] = palloc(sizeof(double) * nfeatures);
+
+    w = palloc0(sizeof(double) * w_len);
+    m = palloc0(sizeof(double) * w_len);
+    v = palloc0(sizeof(double) * w_len);
+    elog(WARNING, "palloc successful on postpreprocessing");
 
 	/* Critical section */
 	atomic_fss_learn_step(fhash, fss_hash,
-						  nfeatures, matrix, targets, features, target);
+						  nfeatures, matrix, targets, features, target,
+                          w, m, v, w_len);
 	/* End of critical section */
+    elog(WARNING, "learn successfull on postprocessing");
 
 	if (nfeatures > 0)
 		for (i = 0; i < aqo_K; ++i)
-			pfree(matrix[i]);
+            pfree(matrix[i]);
 
 	pfree(features);
+    pfree(w);
+    pfree(m);
+    pfree(v);
 }
 
 /*

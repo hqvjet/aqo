@@ -29,20 +29,31 @@ predict_for_relation(List *restrict_clauses, List *selectivities,
 	double	*matrix[aqo_K];
 	double	targets[aqo_K];
 	double	*features;
+    double  *w;
+    double  *m;
+    double  *v;
 	double	result;
 	int		rows;
 	int		i;
+    int     w_len;
 
 	*fss_hash = get_fss_for_object(restrict_clauses, selectivities, relids,
 														&nfeatures, &features);
 
+    w_len = aqo_RANK * nfeatures + 1;
+
+    w = palloc(sizeof(double) * w_len);
+    m = palloc(sizeof(double) * w_len);
+    v = palloc(sizeof(double) * w_len);
+
 	if (nfeatures > 0)
 		for (i = 0; i < aqo_K; ++i)
 			matrix[i] = palloc0(sizeof(**matrix) * nfeatures);
+    elog(WARNING, "palloc successful on cardinality_esti");
 
 	if (load_fss(query_context.fspace_hash, *fss_hash, nfeatures, matrix,
-				 targets, &rows))
-		result = OkNNr_predict(rows, nfeatures, matrix, targets, features);
+				 targets, w, m, v, &rows))
+		result = OPRr_predict(nfeatures, features, w);
 	else
 	{
 		/*
@@ -53,8 +64,12 @@ predict_for_relation(List *restrict_clauses, List *selectivities,
 		 */
 		result = -1;
 	}
+    elog(WARNING, "predict successful on car_esti");
 
 	pfree(features);
+    pfree(w);
+    pfree(m);
+    pfree(v);
 	if (nfeatures > 0)
 	{
 		for (i = 0; i < aqo_K; ++i)

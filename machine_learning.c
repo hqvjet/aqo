@@ -20,80 +20,48 @@
  */
 
 #include "aqo.h"
+// #include<math.h>
+// #include<stdlib.h>
+// #include<stdio.h>
 
-static double fs_distance(double *a, double *b, int len);
-static double fs_similarity(double dist);
-static double compute_weights(double *distances, int nrows, double *w, int *idx);
+#define B1 0.9
+#define B2 0.99
+#define ALPHA 1e-8
+#define learning_rate 1e-2
+// #define aqo_RANK 2
+// #define aqo_epoch 100
 
+static void update_weights(int nfeatures, double *w, double *m, double *v, double *x, double error, int t);
 
-/*
- * Computes L2-distance between two given vectors.
- */
-double
-fs_distance(double *a, double *b, int len)
-{
-	double		res = 0;
-	int			i;
+void update_weights(int nfeatures, double *w, double *m, double *v, double *x, double error, int t) {
+    double g = error;
+    int sub_rank;
+    double m_corr, v_corr;
 
-	for (i = 0; i < len; ++i)
-		res += (a[i] - b[i]) * (a[i] - b[i]);
-	if (len != 0)
-		res = sqrt(res / len);
-	return res;
+    m[0] = B1 * m[0] + (1 - B1) * g; 
+    v[0] = B2 * v[0] + (1 - B2) * pow(g, 2);
+
+    m_corr = m[0] / (1 - pow(B1, t));
+    v_corr = v[0] / (1 - pow(B2, t));
+
+    w[0] -= learning_rate * m_corr / (sqrt(v_corr) + ALPHA);
+    
+    for (int rank = 0; rank < aqo_RANK; ++ rank) {
+        for (int col = 0; col < nfeatures; ++ col) {
+            g = error * pow(x[col], rank + 1);
+            sub_rank = nfeatures * rank + col + 1;
+
+            m[sub_rank] = B1 * m[sub_rank] + (1 - B1) * g; 
+            v[sub_rank] = B2 * v[sub_rank] + (1 - B2) * pow(g, 2);
+
+            m_corr = m[sub_rank] / (1 - pow(B1, t));
+            v_corr = v[sub_rank] / (1 - pow(B2, t));
+
+            w[sub_rank] -= learning_rate * m_corr / (sqrt(v_corr) + ALPHA); 
+        }
+    }
+
 }
-
-/*
- * Returns similarity between objects based on distance between them.
- */
-double
-fs_similarity(double dist)
-{
-	return 1.0 / (0.001 + dist);
-}
-
-/*
- * Compute weights necessary for both prediction and learning.
- * Creates and returns w, w_sum and idx based on given distances ad matrix_rows.
- *
- * Appeared as a separate function because of "don't repeat your code"
- * principle.
- */
-double
-compute_weights(double *distances, int nrows, double *w, int *idx)
-{
-	int		i,
-			j;
-	int		to_insert,
-			tmp;
-	double	w_sum = 0;
-
-	for (i = 0; i < aqo_k; ++i)
-		idx[i] = -1;
-
-	/* Choose from all neighbors only several nearest objects */
-	for (i = 0; i < nrows; ++i)
-		for (j = 0; j < aqo_k; ++j)
-			if (idx[j] == -1 || distances[i] < distances[idx[j]])
-			{
-				to_insert = i;
-				for (; j < aqo_k; ++j)
-				{
-					tmp = idx[j];
-					idx[j] = to_insert;
-					to_insert = tmp;
-				}
-				break;
-			}
-
-	/* Compute weights by the nearest neighbors distances */
-	for (j = 0; j < aqo_k && idx[j] != -1; ++j)
-	{
-		w[j] = fs_similarity(distances[idx[j]]);
-		w_sum += w[j];
-	}
-	return w_sum;
-}
-
 /*
  * With given matrix, targets and features makes prediction for current object.
  *
@@ -101,37 +69,24 @@ compute_weights(double *distances, int nrows, double *w, int *idx)
  * positive targets are assumed.
  */
 double
-OkNNr_predict(int nrows, int ncols, double **matrix, const double *targets,
-			  double *features)
+OPRr_predict(int ncols, double *features, double *w)
 {
-	double	distances[aqo_K];
-	int		i;
-	int		idx[aqo_K]; /* indexes of nearest neighbors */
-	double	w[aqo_K];
-	double	w_sum;
-	double	result = 0;
+    double result = 1.0 * w[0];
 
-	for (i = 0; i < nrows; ++i)
-		distances[i] = fs_distance(matrix[i], features, ncols);
+    for (int rank = 0; rank < aqo_RANK; ++ rank)
+        for (int col = 0; col < ncols; ++ col) {
+            result += (double)(w[rank * ncols + col + 1] * pow(features[col], rank + 1));
+        }
 
-	w_sum = compute_weights(distances, nrows, w, idx);
+    if (result < 0)
+        result = 0;
 
-	for (i = 0; i < aqo_k; ++i)
-		if (idx[i] != -1)
-			result += targets[idx[i]] * w[i] / w_sum;
-
-	if (result < 0)
-		result = 0;
-
-	/* this should never happen */
-	if (idx[0] == -1)
-		result = -1;
-
-	return result;
+    return result;
 }
 
 /*
  * Modifies given matrix and targets using features and target value of new
+            sub_rank = col;
  * object.
  * Returns indexes of changed lines: if index of line is less than matrix_rows
  * updates this line in database, otherwise adds new line with given index.
@@ -139,101 +94,65 @@ OkNNr_predict(int nrows, int ncols, double **matrix, const double *targets,
  * starting from matrix_rows.
  */
 int
-OkNNr_learn(int nrows, int nfeatures, double **matrix, double *targets,
-			double *features, double target)
+OPRr_learn(int nrows, int nfeatures, double **matrix, double *targets, 
+           double *features, double target, double *w, double *m, double *v)
 {
-	double	   distances[aqo_K];
-	int			i,
-				j;
-	int			mid = 0; /* index of row with minimum distance value */
-	int		   idx[aqo_K];
+    double error;
 
-	/*
-	 * For each neighbor compute distance and search for nearest object.
-	 */
-	for (i = 0; i < nrows; ++i)
-	{
-		distances[i] = fs_distance(matrix[i], features, nfeatures);
-		if (distances[i] < distances[mid])
-			mid = i;
-	}
+    for (int epoch = 1; epoch <= aqo_epoch; ++ epoch) {
+        for (int row = 0; row < nrows; ++ row) {
+            error = targets[row] - OPRr_predict(nfeatures, matrix[row], w);
+            printf("\n");
 
-	/*
-	 * We do not want to add new very similar neighbor. And we can't
-	 * replace data for the neighbor to avoid some fluctuations.
-	 * We will change it's row with linear smoothing by learning_rate.
-	 */
-	if (nrows > 0 && distances[mid] < object_selection_threshold)
-	{
-		for (j = 0; j < nfeatures; ++j)
-			matrix[mid][j] += learning_rate * (features[j] - matrix[mid][j]);
-		targets[mid] += learning_rate * (target - targets[mid]);
+            update_weights(nfeatures, w, m, v, matrix[row], error, epoch);
+        }
 
-		return nrows;
-	}
+        update_weights(nfeatures, w, m, v, features, target, epoch);
 
-	if (nrows < aqo_K)
-	{
-		/* We can't reached limit of stored neighbors */
+    }
 
-		/*
-		 * Add new line into the matrix. We can do this because matrix_rows
-		 * is not the boundary of matrix. Matrix has aqo_K free lines
-		 */
-		for (j = 0; j < nfeatures; ++j)
-			matrix[nrows][j] = features[j];
-		targets[nrows] = target;
-
-		return nrows+1;
-	}
-	else
-	{
-		double	*feature;
-		double	avg_target = 0;
-		double	tc_coef; /* Target correction coefficient */
-		double	fc_coef; /* Feature correction coefficient */
-		double	w[aqo_K];
-		double	w_sum;
-
-		/*
-		 * We reaches limit of stored neighbors and can't simply add new line
-		 * at the matrix. Also, we can't simply delete one of the stored
-		 * neighbors.
-		 */
-
-		/*
-		 * Select nearest neighbors for the new object. store its indexes in
-		 * idx array. Compute weight for each nearest neighbor and total weight
-		 * of all nearest neighbor.
-		 */
-		w_sum = compute_weights(distances, nrows, w, idx);
-
-		/*
-		 * Compute average value for target by nearest neighbors. We need to
-		 * check idx[i] != -1 because we may have smaller value of nearest
-		 * neighbors than aqo_k.
-		 * Semantics of coef1: it is defined distance between new object and
-		 * this superposition value (with linear smoothing).
-		 * */
-		for (i = 0; i < aqo_k && idx[i] != -1; ++i)
-			avg_target += targets[idx[i]] * w[i] / w_sum;
-		tc_coef = learning_rate * (avg_target - target);
-
-		/* Modify targets and features of each nearest neighbor row. */
-		for (i = 0; i < aqo_k && idx[i] != -1; ++i)
-		{
-			fc_coef = tc_coef * (targets[idx[i]] - avg_target) * w[i] * w[i] /
-				sqrt(nfeatures) / w_sum;
-
-			targets[idx[i]] -= tc_coef * w[i] / w_sum;
-			for (j = 0; j < nfeatures; ++j)
-			{
-				feature = matrix[idx[i]];
-				feature[j] -= fc_coef * (features[j] - feature[j]) /
-					distances[idx[i]];
-			}
-		}
-	}
-
-	return nrows;
+    return nrows + 1;
 }
+
+// int main() {
+//
+//     printf("passed 113\n");
+//     int nrows = 4;
+//     int nfeatures = 7;
+//     double temp_matrix[4][7] = {{-2.655181526924674e-2,379489.1310107702,1.0642580724683649e-3,-6.071141817925366e-1,-2.6551816311121274e-2,1.0642577721150653e-3,0},
+//         {-2.268056795189301e+2,1.186651003306643e-2,1.8473855347065337e-9,2.282731897313745e-7,3.3250371877351972e+1,5.5840325945756756e+2,5.0979855465985e-3},
+//         {2.1219957934e-3,8.487983164e-3,6.3659873764e-3,1.69759663287e-3,3e-3,0,0},
+//         {2.121995792e-3,1.0609978958e-3,1.5e-3,8.487983168e-3,3.5e-3,0,0}};
+//     double temp_targets[4] = {5.09807034593093e-3,6.95301158536524e-3,6.47774094685893e-3,6.95301158535496e-3};
+//     double **matrix = (double**) malloc(nrows * sizeof(double*)); 
+//     double *targets = (double *) malloc(nrows * sizeof(double));
+//
+//     for (int i = 0; i < nrows; ++i)
+//         matrix[i] = (double *) malloc (nfeatures * sizeof(double));
+//
+//     for (int i = 0; i < nrows; ++i)
+//         targets[i] = temp_targets[i];
+//
+//     for (int i = 0; i < nrows; ++i)
+//          matrix[i] = temp_matrix[i];
+//
+//     double *w = (double*) malloc((nfeatures * aqo_RANK + 1) * sizeof(double));
+//     double *m = (double*) malloc((nfeatures * aqo_RANK + 1) * sizeof(double));
+//     double *v = (double*) malloc((nfeatures * aqo_RANK + 1) * sizeof(double));
+//
+//     for (int i = 0; i < nfeatures * aqo_RANK + 1; ++ i) {
+//         w[i] = 0.0;
+//         m[i] = 0.0;
+//         v[i] = 0.0;
+//     }
+//
+//     double *features = (double *) malloc(nfeatures * sizeof(double));
+//     double temp_features[7] = {-9.47593749637022e-1,6.7987358202656836e-2,6.675606451883867e+4,6.675607111460889e+4,2.9336032677e-3,1.06099789573e-3,0};
+//
+//     for (int i = 0; i < nfeatures; ++i)
+//         features[i] = temp_features[i];
+//
+//     double target = 5.098070293073e-3;
+//
+//     OPRr_learn(nrows, nfeatures, matrix, targets, features, target, w, m, v);
+// }

@@ -235,7 +235,9 @@ extern double auto_tuning_convergence_error;
 /* Machine learning parameters */
 
 /* Max number of matrix rows - max number of possible neighbors. */
-#define	aqo_K	(30)
+#define	aqo_RANK	(2)
+#define aqo_epoch   (10)
+#define aqo_K       (30)
 
 extern const double object_selection_prediction_threshold;
 extern const double object_selection_threshold;
@@ -288,9 +290,11 @@ extern bool update_query(int qhash, int fhash,
 						 bool learn_aqo, bool use_aqo, bool auto_tuning);
 extern bool add_query_text(int query_hash);
 extern bool load_fss(int fhash, int fss_hash,
-					 int ncols, double **matrix, double *targets, int *rows);
+					 int ncols, double **matrix, double *targets, 
+                     double *w, double *m, double *v, int *rows);
 extern bool update_fss(int fhash, int fss_hash, int nrows, int ncols,
-					   double **matrix, double *targets);
+					   double **matrix, double *targets,
+                       double *w, double *m, double *v);
 QueryStat  *get_aqo_stat(int query_hash);
 void		update_aqo_stat(int query_hash, QueryStat * stat);
 extern bool my_index_insert(Relation indexRelation,	Datum *values, bool *isnull,
@@ -326,7 +330,7 @@ double aqo_get_parameterized_baserel_size(PlannerInfo *root,
 								   List *param_clauses);
 void aqo_set_joinrel_size_estimates(PlannerInfo *root, RelOptInfo *rel,
 							   RelOptInfo *outer_rel,
-							   RelOptInfo *inner_rel,
+						   RelOptInfo *inner_rel,
 							   SpecialJoinInfo *sjinfo,
 							   List *restrictlist);
 double aqo_get_parameterized_joinrel_size(PlannerInfo *root,
@@ -355,12 +359,11 @@ void		aqo_copy_generic_path_info(PlannerInfo *root, Plan *dest, Path *src);
 void		aqo_ExecutorEnd(QueryDesc *queryDesc);
 
 /* Machine learning techniques */
-extern double OkNNr_predict(int nrows, int ncols,
-							double **matrix, const double *targets,
-							double *features);
-extern int OkNNr_learn(int matrix_rows, int matrix_cols,
+extern double OPRr_predict(int ncols, double *features, double * w);
+extern int OPRr_learn(int matrix_rows, int matrix_cols,
 			double **matrix, double *targets,
-			double *features, double target);
+			double *features, double target,
+            double *w, double *m, double *v);
 
 /* Automatic query tuning */
 void		automatical_query_tuning(int query_hash, QueryStat * stat);

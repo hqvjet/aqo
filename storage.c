@@ -29,6 +29,7 @@ static void deform_matrix(Datum datum, double **matrix);
 
 static ArrayType *form_vector(double *vector, int nrows);
 static void deform_vector(Datum datum, double *vector, int *nelems);
+static void deform_vector2(Datum datum, double *vector);
 
 #define FormVectorSz(v_name)			(form_vector((v_name), (v_name ## _size)))
 #define DeformVectorSz(datum, v_name)	(deform_vector((datum), (v_name), &(v_name ## _size)))
@@ -287,7 +288,8 @@ add_query_text(int qhash)
  */
 bool
 load_fss(int fhash, int fss_hash,
-		 int ncols, double **matrix, double *targets, int *rows)
+		 int ncols, double **matrix, double *targets, 
+         double *w, double *m, double *v, int *rows)
 {
 	RangeVar	*rv;
 	Relation	hrel;
@@ -299,8 +301,8 @@ load_fss(int fhash, int fss_hash,
 	Oid			reloid;
 	IndexScanDesc scan;
 	ScanKeyData	key[2];
-	Datum		values[5];
-	bool		isnull[5];
+	Datum		values[8];
+	bool		isnull[8];
 	bool		success = true;
 
 	reloid = RelnameGetRelid("aqo_fss_access_idx");
@@ -322,7 +324,7 @@ load_fss(int fhash, int fss_hash,
 	slot = MakeSingleTupleTableSlot(hrel->rd_att, &TTSOpsBufferHeapTuple);
 	find_ok = index_getnext_slot(scan, ForwardScanDirection, slot);
 
-	if (matrix == NULL && targets == NULL && rows == NULL)
+	if (matrix == NULL && targets == NULL && rows == NULL && w == NULL && m == NULL && v == NULL)
 	{
 		/* Just check availability */
 		success = find_ok;
@@ -342,6 +344,10 @@ load_fss(int fhash, int fss_hash,
 				deform_matrix(values[3], matrix);
 
 			deform_vector(values[4], targets, rows);
+            deform_vector2(values[5], w);
+            deform_vector2(values[6], m);
+            deform_vector2(values[7], v);
+            elog(WARNING, "load successful on storage");
 		}
 		else
 			elog(ERROR, "unexpected number of features for hash (%d, %d):\
@@ -373,7 +379,8 @@ load_fss(int fhash, int fss_hash,
  */
 bool
 update_fss(int fhash, int fsshash, int nrows, int ncols,
-		   double **matrix, double *targets)
+		   double **matrix, double *targets, 
+           double *w, double *m, double *v)
 {
 	RangeVar   *rv;
 	Relation	hrel;
@@ -383,9 +390,9 @@ update_fss(int fhash, int fsshash, int nrows, int ncols,
 	TupleDesc	tupDesc;
 	HeapTuple	tuple,
 				nw_tuple;
-	Datum		values[5];
-	bool		isnull[5] = { false, false, false, false, false };
-	bool		replace[5] = { false, false, false, true, true };
+	Datum		values[8];
+	bool		isnull[8] = { false, false, false, false, false, false, false, false };
+	bool		replace[8] = { false, false, false, true, true, true, true, true };
 	bool		shouldFree;
 	bool		find_ok = false;
 	bool		update_indexes;
@@ -393,6 +400,7 @@ update_fss(int fhash, int fsshash, int nrows, int ncols,
 	IndexScanDesc scan;
 	ScanKeyData	key[2];
 	bool result = true;
+    int  w_len = aqo_RANK * ncols + 1;
 
 	/* Couldn't allow to write if xact must be read-only. */
 	if (XactReadOnly)
@@ -433,6 +441,10 @@ update_fss(int fhash, int fsshash, int nrows, int ncols,
 			isnull[3] = true;
 
 		values[4] = PointerGetDatum(form_vector(targets, nrows));
+        values[5] = PointerGetDatum(form_vector(w, w_len));
+        values[6] = PointerGetDatum(form_vector(m, w_len));
+        values[7] = PointerGetDatum(form_vector(v, w_len));
+
 		tuple = heap_form_tuple(tupDesc, values, isnull);
 
 		/*
@@ -456,6 +468,10 @@ update_fss(int fhash, int fsshash, int nrows, int ncols,
 			isnull[3] = true;
 
 		values[4] = PointerGetDatum(form_vector(targets, nrows));
+        values[5] = PointerGetDatum(form_vector(w, w_len));
+        values[6] = PointerGetDatum(form_vector(m, w_len));
+        values[7] = PointerGetDatum(form_vector(v, w_len));
+
 		nw_tuple = heap_modify_tuple(tuple, tupDesc,
 									 values, isnull, replace);
 		if (my_simple_heap_update(hrel, &(nw_tuple->t_self), nw_tuple,
@@ -715,6 +731,27 @@ deform_vector(Datum datum, double *vector, int *nelems)
 					  FLOAT8OID, 8, FLOAT8PASSBYVAL, 'd',
 					  &values, NULL, nelems);
 	for (i = 0; i < *nelems; ++i)
+		vector[i] = DatumGetFloat8(values[i]);
+	pfree(values);
+	pfree(array);
+}
+
+/*
+ * Expands vector from storage into simple C-array.
+ * But not returns its number of elements.
+ */
+void
+deform_vector2(Datum datum, double *vector)
+{
+	ArrayType  *array = DatumGetArrayTypePCopy(PG_DETOAST_DATUM(datum));
+	Datum	   *values;
+	int			i;
+    int        nelems;
+
+	deconstruct_array(array,
+					  FLOAT8OID, 8, FLOAT8PASSBYVAL, 'd',
+					  &values, NULL, &nelems);
+	for (i = 0; i < nelems; ++i)
 		vector[i] = DatumGetFloat8(values[i]);
 	pfree(values);
 	pfree(array);

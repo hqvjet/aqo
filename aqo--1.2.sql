@@ -31,7 +31,10 @@ CREATE TABLE public.aqo_data (
 	fsspace_hash	int NOT NULL,
 	nfeatures		int NOT NULL,
 	features		double precision[][],
-	targets			double precision[]
+	targets			double precision[],
+    w               double precision[],
+    m               double precision[],
+    v               double precision[]
 );
 
 CREATE UNIQUE INDEX aqo_fss_access_idx ON public.aqo_data (fspace_hash, fsspace_hash);
