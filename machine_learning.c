@@ -19,12 +19,45 @@
  *
  */
 
-#include "aqo.h"
+// #include "aqo.h"
+#include<math.h>
+#include<stdlib.h>
+#include<stdio.h>
 
-static double fs_distance(double *a, double *b, int len);
-static double fs_similarity(double dist);
-static double compute_weights(double *distances, int nrows, double *w, int *idx);
+#define MAX_DEPTH 8
+#define MIN_NODE 2 
+#define aqo_k 3
+#define aqo_K 30
+#define learning_rate 1e-1
+#define object_selection_threshold 0.1
 
+struct Node
+{
+    double threshold;
+    double predict;
+    struct Node	*left;
+    struct Node	*right;
+};
+
+// static double fs_distance(double *a, double *b, int len);
+// static double fs_similarity(double dist);
+// static double compute_weights(double *distances, int nrows, double *w, int *idx);
+// static void calculate_loss(int nrows, int target_col, double **matrix, const double *targets, double *region_value, double *position, double *loss);
+// static double calculate_error(int start, int end, const double *targets, double *region_value);
+// static struct Node* create_node(double threshold, double predict);
+// static struct Node* create_decision_tree(int depth, int rows, int target_col, double **matrix, const double *targets);
+
+struct Node*
+create_node(double threshold, double predict)
+{
+    // struct Node *node = palloc0(sizeof(*node));
+    struct Node *node = malloc(sizeof(*node));
+    node->threshold = threshold;
+    node->predict = predict;
+    node->left = NULL;
+    node->right = NULL;
+    return node;
+}
 
 /*
  * Computes L2-distance between two given vectors.
@@ -94,6 +127,58 @@ compute_weights(double *distances, int nrows, double *w, int *idx)
 	return w_sum;
 }
 
+// Using Average in Region
+double
+calculate_error(int start, int end, const double *targets, double *region_value) {
+    double sum = 0;
+    int n_object = 0;
+    double avg;
+    double loss = 0;
+    int i;
+
+    // Calculate average value in Region
+    for (i = start; i <= end; ++i) {
+        sum += targets[i];
+        n_object++;
+    }
+
+    avg = sum / n_object;
+    region_value = &avg;
+
+    // Calculate error based on avg val
+    for (i = start; i <= end; ++i)
+        loss += (targets[i] - avg) * (targets[i] - avg);
+
+    return loss;
+}
+
+void
+calculate_loss(int nrows, int target_col, double **matrix, const double *targets, double *region_value, double *position, double *loss)
+{
+    int i;
+    double region_loss;
+    double best_loss=10e9;
+    double best_region_value;
+    double best_position;
+
+    for (i = 0; i < nrows - 1; ++i) {
+        region_loss = calculate_error(0, i, targets, region_value);
+        region_loss += calculate_error(i, nrows - 1, targets, region_value);
+
+        if (region_loss <= best_loss) {
+            best_loss = region_loss;
+            best_position = (double)(matrix[i][target_col] + matrix[i + 1][target_col]) / 2.0;
+            best_region_value = *region_value;
+        }
+
+
+    }
+
+    region_value = &best_region_value;
+    position = &best_position;
+    loss = &best_loss;
+}
+
 /*
  * With given matrix, targets and features makes prediction for current object.
  *
@@ -104,27 +189,63 @@ double
 OkNNr_predict(int nrows, int ncols, double **matrix, const double *targets,
 			  double *features)
 {
-	double	distances[aqo_K];
 	int		i;
-	int		idx[aqo_K]; /* indexes of nearest neighbors */
-	double	w[aqo_K];
-	double	w_sum;
+    int     j;
 	double	result = 0;
 
-	for (i = 0; i < nrows; ++i)
-		distances[i] = fs_distance(matrix[i], features, ncols);
+    double	*filtered_matrix[aqo_K];
+    int     num_objects = nrows;
+    int     tree_depth = 0;
+    struct Node *tree = NULL;
+    struct Node *node;
 
-	w_sum = compute_weights(distances, nrows, w, idx);
+    // Init filtered_features
+    for (i = 0; i < aqo_K; ++i)
+        // filtered_matrix[i] = palloc0(sizeof(**filtered_matrix) * ncols);
+        filtered_matrix[i] = malloc(sizeof(**filtered_matrix) * ncols);
+        
+    for (i = 0; i < nrows; ++i) {
+        for (j = 0; j < ncols; ++j)
+            filtered_matrix[i][j] = matrix[i][j];
+    }
 
-	for (i = 0; i < aqo_k; ++i)
-		if (idx[i] != -1)
-			result += targets[idx[i]] * w[i] / w_sum;
+    // Create tree
+    while (num_objects > MIN_NODE && tree_depth < MAX_DEPTH)
+    {
+        double  region_value, best_region_value;
+        double  position, best_position;
+        double  loss, best_loss=10e9;
+
+        for (i = 0; i < ncols; ++i) {
+            calculate_loss(nrows, i, filtered_matrix, targets, &region_value, &position, &loss);
+            if (loss <= best_loss) {
+                best_loss = loss;
+                best_region_value = region_value;
+                best_position = position;
+            }
+        }
+        
+        if (tree == NULL)
+        {
+            tree = create_node(best_position, best_region_value);
+        }
+        else
+        {
+            // Add Node into Tree here           
+            node = create_node(best_position, best_region_value);
+            // TODO: The code doesn't finish here..........
+
+        }
+        tree_depth++;
+
+        printf("Depth: %d, Position: %f, Loss: %f, Value: %f\n", tree_depth, best_position, best_loss, best_region_value);
+    }
 
 	if (result < 0)
 		result = 0;
 
 	/* this should never happen */
-	if (idx[0] == -1)
+	if (nrows == 0)
 		result = -1;
 
 	return result;
@@ -158,6 +279,7 @@ OkNNr_learn(int nrows, int nfeatures, double **matrix, double *targets,
 			mid = i;
 	}
 
+
 	/*
 	 * We do not want to add new very similar neighbor. And we can't
 	 * replace data for the neighbor to avoid some fluctuations.
@@ -165,12 +287,13 @@ OkNNr_learn(int nrows, int nfeatures, double **matrix, double *targets,
 	 */
 	if (nrows > 0 && distances[mid] < object_selection_threshold)
 	{
-		for (j = 0; j < nfeatures; ++j)
-			matrix[mid][j] += learning_rate * (features[j] - matrix[mid][j]);
-		targets[mid] += learning_rate * (target - targets[mid]);
+		// for (j = 0; j < nfeatures; ++j)
+		// 	matrix[mid][j] += learning_rate * (features[j] - matrix[mid][j]);
+		// targets[mid] += learning_rate * (target - targets[mid]);
 
 		return nrows;
 	}
+    printf("Ok");
 
 	if (nrows < aqo_K)
 	{
@@ -236,4 +359,75 @@ OkNNr_learn(int nrows, int nfeatures, double **matrix, double *targets,
 	}
 
 	return nrows;
+}
+
+int main() {
+    int nrows = 30;
+    int nfeatures = 3;
+    double temp_matrix[32][3] = {
+        {1,2,3},
+        {2,3,4},
+        {3,4,5},
+        {4,5,6},
+        {5,6,7},
+        {6,7,8},
+        {7,8,9},
+        {8,9,10},
+        {9,10,11},
+        {10,11,12},
+        {11,12,13},
+        {12,13,14},
+        {13,14,15},
+        {14,15,16},
+        {15,16,17},
+        {16,17,18},
+        {17,18,19},
+        {18,19,20},
+        {19,20,21},
+        {20,21,22},
+        {21,22,23},
+        {22,23,24},
+        {23,24,25},
+        {24,25,26},
+        {25,26,27},
+        {26,27,28},
+        {27,28,29},
+        {28,29,30},
+        {29,30,31},
+        {30,31,32}
+    };
+    double temp_targets[32] = {3,6,9,12,15,18,21,24,27,30,33,36,39,42,45,48,51,54,57,60,63,66,69,72,75,78,81,84,87,90,93,96};
+
+    double **matrix = (double**) malloc(aqo_K * sizeof(double*)); 
+    double *targets = (double *) malloc(aqo_K * sizeof(double));
+
+    for (int i = 0; i < aqo_K; ++i)
+        matrix[i] = (double *) malloc (nfeatures * sizeof(double));
+
+
+    for (int i = 0; i < nrows; ++i)
+        targets[i] = temp_targets[i];
+
+    for (int i = 0; i < nrows; ++i)
+         matrix[i] = temp_matrix[i];
+
+    double *features = (double *) malloc(nfeatures * sizeof(double));
+    double temp_features[7] = {11,12,13};
+
+    for (int i = 0; i < nfeatures; ++i)
+        features[i] = temp_features[i];
+
+    double target = 33;
+    int a = OkNNr_learn(nrows, nfeatures, matrix, targets, features, target);
+
+
+    // Print matrix and targets
+    for (int i = 0; i < nrows; ++i)
+    {
+        for (int j = 0; j < nfeatures; ++j)
+            printf("%f ", matrix[i][j]);
+        printf(" %f\n", targets[i]);
+    }
+
+    printf("Prediction: %f\n", OkNNr_predict(nrows, nfeatures, matrix, targets, features));
 }

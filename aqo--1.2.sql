@@ -32,6 +32,7 @@ CREATE TABLE public.aqo_data (
 	nfeatures		int NOT NULL,
 	features		double precision[][],
 	targets			double precision[]
+    -- tree_data       JSONB NOT NULL
 );
 
 CREATE UNIQUE INDEX aqo_fss_access_idx ON public.aqo_data (fspace_hash, fsspace_hash);
