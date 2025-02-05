@@ -19,41 +19,43 @@
  *
  */
 
-// #include "aqo.h"
-#include<math.h>
-#include<stdlib.h>
-#include<stdio.h>
+#include "aqo.h"
+// #include<math.h>
+// #include<stdlib.h>
+// #include<stdio.h>
 
 #define MAX_DEPTH 8
-#define MIN_NODE 2 
-#define aqo_k 3
-#define aqo_K 30
-#define learning_rate 1e-1
-#define object_selection_threshold 0.1
+#define MIN_NODE 2
+// #define aqo_k 3
+// #define aqo_K 30
+// #define learning_rate 1e-1
+// #define object_selection_threshold 0.1
 
-struct Node
+struct RT_Node
 {
     double threshold;
     double predict;
-    struct Node	*left;
-    struct Node	*right;
+    int col;
+    struct RT_Node	*left;
+    struct RT_Node	*right;
 };
 
-// static double fs_distance(double *a, double *b, int len);
-// static double fs_similarity(double dist);
-// static double compute_weights(double *distances, int nrows, double *w, int *idx);
-// static void calculate_loss(int nrows, int target_col, double **matrix, const double *targets, double *region_value, double *position, double *loss);
-// static double calculate_error(int start, int end, const double *targets, double *region_value);
-// static struct Node* create_node(double threshold, double predict);
-// static struct Node* create_decision_tree(int depth, int rows, int target_col, double **matrix, const double *targets);
+static double fs_distance(double *a, double *b, int len);
+static double fs_similarity(double dist);
+static double compute_weights(double *distances, int nrows, double *w, int *idx);
+static double calculate_error(int start, int end, int *matrix_index, const double *targets, double *region_value);
+static void calculate_loss(int nrows, int target_col, int *matrix_index, double **matrix, const double *targets, double *position, double *loss);
+static struct RT_Node* create_node(double threshold, double predict, int col);
+static struct RT_Node* build_tree(int nrows, int ncols, int depth, int *matrix_index, double **matrix, const double *targets);
 
-struct Node*
-create_node(double threshold, double predict)
+struct RT_Node*
+create_node(double threshold, double predict, int col)
 {
     // struct Node *node = palloc0(sizeof(*node));
-    struct Node *node = malloc(sizeof(*node));
+    struct RT_Node *node = palloc(sizeof(*node));
     node->threshold = threshold;
     node->predict = predict;
+    node->col = col;
     node->left = NULL;
     node->right = NULL;
     return node;
@@ -129,7 +131,7 @@ compute_weights(double *distances, int nrows, double *w, int *idx)
 
 // Using Average in Region
 double
-calculate_error(int start, int end, const double *targets, double *region_value) {
+calculate_error(int start, int end, int *matrix_index, const double *targets, double *region_value) {
     double sum = 0;
     int n_object = 0;
     double avg;
@@ -138,115 +140,195 @@ calculate_error(int start, int end, const double *targets, double *region_value)
 
     // Calculate average value in Region
     for (i = start; i <= end; ++i) {
-        sum += targets[i];
-        n_object++;
+        if (matrix_index[i] == 1)
+        {
+            sum += targets[i];
+            n_object++;
+        }
     }
 
     avg = sum / n_object;
-    region_value = &avg;
+    *region_value = avg;
 
     // Calculate error based on avg val
     for (i = start; i <= end; ++i)
-        loss += (targets[i] - avg) * (targets[i] - avg);
+        if (matrix_index[i] == 1)
+            loss += (targets[i] - avg) * (targets[i] - avg);
+
+    // printf("Region: Avg %.2f, n_object %d, Sum %.2f\n", avg, n_object, sum);
 
     return loss;
 }
 
 void
-calculate_loss(int nrows, int target_col, double **matrix, const double *targets, double *region_value, double *position, double *loss)
+calculate_loss(int nrows, int target_col, int *matrix_index,
+               double **matrix, const double *targets, double *position, double *loss)
 {
     int i;
     double region_loss;
     double best_loss=10e9;
-    double best_region_value;
-    double best_position;
+    double best_position = 0.0;
+    double region_value;
 
-    for (i = 0; i < nrows - 1; ++i) {
-        region_loss = calculate_error(0, i, targets, region_value);
-        region_loss += calculate_error(i, nrows - 1, targets, region_value);
+    for (i = 0; i < aqo_K - 1; ++i) {
+        if (matrix_index[i] == 1)
+        {
+            region_loss = calculate_error(0, i, matrix_index, targets, &region_value);
+            region_loss += calculate_error(i + 1, aqo_K - 1, matrix_index, targets, &region_value);
 
-        if (region_loss <= best_loss) {
-            best_loss = region_loss;
-            best_position = (double)(matrix[i][target_col] + matrix[i + 1][target_col]) / 2.0;
-            best_region_value = *region_value;
+            // printf("Region loss: %.2f\n", region_loss);
+
+            if (region_loss < best_loss) {
+                best_loss = region_loss;
+                best_position = (matrix[i][target_col] + matrix[i + 1][target_col]) / 2.0;
+                // printf("Get better position: %f\n", best_position);
+
+            }
         }
-
-
     }
 
-    region_value = &best_region_value;
-    position = &best_position;
-    loss = &best_loss;
+    *position = best_position;
+    *loss = best_loss;
+    // printf("Best position: %f\n", *position);
 }
 
-/*
- * With given matrix, targets and features makes prediction for current object.
- *
- * Returns negative value in the case of refusal to make a prediction, because
- * positive targets are assumed.
- */
+struct RT_Node*
+build_tree(int nrows, int ncols, int depth, int *matrix_index, double **matrix, const double *targets)
+{
+    int i;
+    double  best_loss = 10e9;
+    double  best_position = 0.0;
+    double  loss;
+    double  position;
+    int     i_dimension = 0;
+    int     right_matrix_index[aqo_K];
+    int     left_matrix_index[aqo_K];
+    int     right_nrows = nrows;
+    int     left_nrows = nrows;
+    struct RT_Node *root = NULL;
+
+    // for (i = 0; i < depth - 1; ++i)
+    //     printf("    ");
+
+    for (i = 0; i < aqo_K; ++i) {
+        right_matrix_index[i] = matrix_index[i];
+        left_matrix_index[i] = matrix_index[i];
+    }
+
+    // Stop condition 1
+    if (depth > MAX_DEPTH || nrows < MIN_NODE) {
+        double avg = 0;
+        int n_object = 0;
+
+        for (i = 0; i < aqo_K; ++i)
+            if (matrix_index[i] == 1) {
+                n_object++;
+                avg += targets[i];
+            }
+        
+        avg /= n_object;
+        // printf("Predict: %.2f, n_object: %d\n", avg, n_object);
+        return create_node(NAN, avg, -1);
+    }
+
+    // Optimize Tree to find best hyperparameters
+    for (i = 0; i < ncols; ++i) {
+        // Search for best hyperparameters
+        calculate_loss(nrows, i, matrix_index, matrix, targets, &position, &loss);
+        // printf("Split: %.2f\t", position);
+        if (loss < best_loss) {
+            best_loss = loss;
+            best_position = position;
+            i_dimension = i;
+        }
+    }
+
+    /* Filter matrix with the new condition */
+    // Leftside
+    for (i = 0; i < aqo_K; ++i)
+    {
+        if (left_matrix_index[i] == 1 && matrix[i][i_dimension] >= best_position)
+        {    
+            left_matrix_index[i] = 0;
+            --left_nrows;
+        }
+    }
+
+    // Rightside
+    for (i = 0; i < aqo_K; ++i)
+    {
+        if (right_matrix_index[i] == 1 && matrix[i][i_dimension] < best_position)
+        {
+            right_matrix_index[i] = 0;
+            --right_nrows;
+        }
+    }
+
+    // Stop condition 2
+    if (right_nrows < MIN_NODE || left_nrows < MIN_NODE) {
+        double avg = 0;
+        int n_object = left_nrows + right_nrows;
+
+        for (i = 0; i < aqo_K; ++i)
+            if (matrix_index[i] == 1)
+                avg += targets[i];
+        
+        avg /= n_object;
+        // printf("Predict: %.2f, n_object: %d\n", avg, n_object);
+        
+        return create_node(NAN, avg, -1);
+    }
+
+    /* Filter object by new threshold */
+    root = create_node(best_position, NAN, i_dimension);
+    // printf("Split: %.2f, Loss: %.2f, Col: %d\n", best_position, best_loss, i_dimension);
+
+    root->left = build_tree(left_nrows, ncols, depth + 1, left_matrix_index, matrix, targets);
+    root->right = build_tree(right_nrows, ncols, depth + 1, right_matrix_index, matrix, targets);
+
+    return root;
+}
+
 double
 OkNNr_predict(int nrows, int ncols, double **matrix, const double *targets,
 			  double *features)
 {
 	int		i;
-    int     j;
 	double	result = 0;
+    int     matrix_index[aqo_K];
+    int     matrix_size = nrows;
+    struct RT_Node *tree = NULL;
 
-    double	*filtered_matrix[aqo_K];
-    int     num_objects = nrows;
-    int     tree_depth = 0;
-    struct Node *tree = NULL;
-    struct Node *node;
+ 	/* this should never happen */
+    if (nrows == 0)
+		return -1;
 
-    // Init filtered_features
-    for (i = 0; i < aqo_K; ++i)
-        // filtered_matrix[i] = palloc0(sizeof(**filtered_matrix) * ncols);
-        filtered_matrix[i] = malloc(sizeof(**filtered_matrix) * ncols);
-        
-    for (i = 0; i < nrows; ++i) {
-        for (j = 0; j < ncols; ++j)
-            filtered_matrix[i][j] = matrix[i][j];
+    for (i = 0; i < aqo_K; ++i) {
+        if (i < nrows)
+            matrix_index[i] = 1;
+        else
+            matrix_index[i] = 0;
     }
 
-    // Create tree
-    while (num_objects > MIN_NODE && tree_depth < MAX_DEPTH)
-    {
-        double  region_value, best_region_value;
-        double  position, best_position;
-        double  loss, best_loss=10e9;
+    tree = build_tree(matrix_size, ncols, 1, matrix_index, matrix, targets);
 
-        for (i = 0; i < ncols; ++i) {
-            calculate_loss(nrows, i, filtered_matrix, targets, &region_value, &position, &loss);
-            if (loss <= best_loss) {
-                best_loss = loss;
-                best_region_value = region_value;
-                best_position = position;
-            }
-        }
-        
-        if (tree == NULL)
-        {
-            tree = create_node(best_position, best_region_value);
+    while (tree != NULL)
+    {
+        if (tree->col == -1) {
+            result = tree->predict;
+            break;
         }
         else
         {
-            // Add Node into Tree here           
-            node = create_node(best_position, best_region_value);
-            // TODO: The code doesn't finish here..........
-
+            if (features[tree->col] >= tree->threshold)
+                tree = tree->right;
+            else
+                tree = tree->left;
         }
-        tree_depth++;
-
-        printf("Depth: %d, Position: %f, Loss: %f, Value: %f\n", tree_depth, best_position, best_loss, best_region_value);
     }
 
 	if (result < 0)
 		result = 0;
-
-	/* this should never happen */
-	if (nrows == 0)
-		result = -1;
 
 	return result;
 }
@@ -293,7 +375,6 @@ OkNNr_learn(int nrows, int nfeatures, double **matrix, double *targets,
 
 		return nrows;
 	}
-    printf("Ok");
 
 	if (nrows < aqo_K)
 	{
@@ -361,73 +442,73 @@ OkNNr_learn(int nrows, int nfeatures, double **matrix, double *targets,
 	return nrows;
 }
 
-int main() {
-    int nrows = 30;
-    int nfeatures = 3;
-    double temp_matrix[32][3] = {
-        {1,2,3},
-        {2,3,4},
-        {3,4,5},
-        {4,5,6},
-        {5,6,7},
-        {6,7,8},
-        {7,8,9},
-        {8,9,10},
-        {9,10,11},
-        {10,11,12},
-        {11,12,13},
-        {12,13,14},
-        {13,14,15},
-        {14,15,16},
-        {15,16,17},
-        {16,17,18},
-        {17,18,19},
-        {18,19,20},
-        {19,20,21},
-        {20,21,22},
-        {21,22,23},
-        {22,23,24},
-        {23,24,25},
-        {24,25,26},
-        {25,26,27},
-        {26,27,28},
-        {27,28,29},
-        {28,29,30},
-        {29,30,31},
-        {30,31,32}
-    };
-    double temp_targets[32] = {3,6,9,12,15,18,21,24,27,30,33,36,39,42,45,48,51,54,57,60,63,66,69,72,75,78,81,84,87,90,93,96};
-
-    double **matrix = (double**) malloc(aqo_K * sizeof(double*)); 
-    double *targets = (double *) malloc(aqo_K * sizeof(double));
-
-    for (int i = 0; i < aqo_K; ++i)
-        matrix[i] = (double *) malloc (nfeatures * sizeof(double));
-
-
-    for (int i = 0; i < nrows; ++i)
-        targets[i] = temp_targets[i];
-
-    for (int i = 0; i < nrows; ++i)
-         matrix[i] = temp_matrix[i];
-
-    double *features = (double *) malloc(nfeatures * sizeof(double));
-    double temp_features[7] = {11,12,13};
-
-    for (int i = 0; i < nfeatures; ++i)
-        features[i] = temp_features[i];
-
-    double target = 33;
-    int a = OkNNr_learn(nrows, nfeatures, matrix, targets, features, target);
-
-
-    // Print matrix and targets
-    for (int i = 0; i < nrows; ++i)
-    {
-        for (int j = 0; j < nfeatures; ++j)
-            printf("%f ", matrix[i][j]);
-        printf(" %f\n", targets[i]);
-    }
-
-    printf("Prediction: %f\n", OkNNr_predict(nrows, nfeatures, matrix, targets, features));
-}
+// int main() {
+//     int nrows = 30;
+//     int nfeatures = 3;
+//     double temp_matrix[32][3] = {
+//         {1,2,3},
+//         {2,3,4},
+//         {3,4,5},
+//         {4,5,6},
+//         {5,6,7},
+//         {6,7,8},
+//         {7,8,9},
+//         {8,9,10},
+//         {9,10,11},
+//         {10,11,12},
+//         {11,12,13},
+//         {12,13,14},
+//         {13,14,15},
+//         {14,15,16},
+//         {15,16,17},
+//         {16,17,18},
+//         {17,18,19},
+//         {18,19,20},
+//         {19,20,21},
+//         {20,21,22},
+//         {21,22,23},
+//         {22,23,24},
+//         {23,24,25},
+//         {24,25,26},
+//         {25,26,27},
+//         {26,27,28},
+//         {27,28,29},
+//         {28,29,30},
+//         {29,30,31},
+//         {30,31,32}
+//     };
+//     double temp_targets[32] = {3,6,9,12,15,18,21,24,27,30,33,36,39,42,45,48,51,54,57,60,63,66,69,72,75,78,81,84,87,90,93,96};
+//
+//     double **matrix = (double**) malloc(aqo_K * sizeof(double*)); 
+//     double *targets = (double *) malloc(aqo_K * sizeof(double));
+//
+//     for (int i = 0; i < aqo_K; ++i)
+//         matrix[i] = (double *) malloc (nfeatures * sizeof(double));
+//
+//
+//     for (int i = 0; i < nrows; ++i)
+//         targets[i] = temp_targets[i];
+//
+//     for (int i = 0; i < nrows; ++i)
+//          matrix[i] = temp_matrix[i];
+//
+//     double *features = (double *) malloc(nfeatures * sizeof(double));
+//     double temp_features[3] = {31,32,33};
+//
+//     for (int i = 0; i < nfeatures; ++i)
+//         features[i] = temp_features[i];
+//
+//     double target = 99;
+//     int a = OkNNr_learn(nrows, nfeatures, matrix, targets, features, target);
+//
+//
+//     // Print matrix and targets
+//     // for (int i = 0; i < nrows; ++i)
+//     // {
+//     //     for (int j = 0; j < nfeatures; ++j)
+//     //         printf("%f ", matrix[i][j]);
+//     //     printf(" %f\n", targets[i]);
+//     // }
+//
+//     printf("Prediction: %f\n", OkNNr_predict(nrows, nfeatures, matrix, targets, features));
+// }
