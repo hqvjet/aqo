@@ -369,9 +369,9 @@ OkNNr_learn(int nrows, int nfeatures, double **matrix, double *targets,
 	 */
 	if (nrows > 0 && distances[mid] < object_selection_threshold)
 	{
-		// for (j = 0; j < nfeatures; ++j)
-		// 	matrix[mid][j] += learning_rate * (features[j] - matrix[mid][j]);
-		// targets[mid] += learning_rate * (target - targets[mid]);
+		for (j = 0; j < nfeatures; ++j)
+			matrix[mid][j] += learning_rate * (features[j] - matrix[mid][j]);
+		targets[mid] += learning_rate * (target - targets[mid]);
 
 		return nrows;
 	}
